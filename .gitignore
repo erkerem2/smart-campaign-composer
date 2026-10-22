@@ -1,0 +1,11 @@
+.env
+*.db
+*.db-journal
+tmp/
+bin/
+node_modules/
+dist/
+ai-sessions/*.tmp
+*.db-wal
+*.db-shm
+backend/data/
