@@ -53,3 +53,18 @@
   - Implemented custom Turkish character normalization (case folding for I/İ/ı, diacritics, and 81 city aliases) to handle inputs safely without raw text matching.
   - Parameterized SQL compiler builds queries (`?`) strictly from internal Go constants, ensuring placeholder and argument counts match under fuzz testing.
   - Implemented `MockLLMClient` returning deterministic ASTs for zero-cost automated unit and integration tests without external API dependencies.
+
+## ADR 006: Campaign Message Composer — Structured Output, Streaming & Validation
+- **Status:** Accepted
+- **Context:** Claude writes SMS and e-mail (subject + body) for a brief; the UI must show the text as it is generated, and nothing that breaks channel rules may reach approval or dispatch.
+- **Decision:**
+  - **Forced tool call** `emit_campaign_messages` with exactly `sms_content`, `email_subject`, `email_body`. The final tool input is decoded strictly (unknown/duplicate keys, non-strings, trailing data rejected). System prompt and JSON Schema are generated from the validator's limits and variable whitelist, so they cannot drift apart.
+  - **Two-layer streaming:** the LLM client exposes `<-chan StreamEvent` with raw `input_json_delta` fragments; an incremental JSON field extractor turns them into per-field `MessageChunk{delta}` events (robust to fragments split inside escapes, surrogate pairs and UTF-8 sequences). Deltas are display-only; the `done` event carries the validated draft, which the UI must use instead of the streamed text. `composer.WriteSSE` relays chunks over Server-Sent Events.
+  - **Validator** counts Unicode code points (not bytes) and enforces SMS ≤ 160 / subject ≤ 80 both on the template as written and on an estimated rendered length (`{{first_name}}` ≈ 10). It reports every issue at once (field, stable code, message). Subjects must be single-line (header injection); control and bidi-override characters are rejected; the e-mail body is Markdown or a small whitelisted HTML subset with balanced tags and `https/http/mailto` links only.
+  - **Bounded self-repair:** an invalid attempt is sent back once with the issues (`MaxAttempts = 2`). If it still fails, a `RejectedError` carries the last attempt so the marketer can fix it by hand — the human stays in control rather than the system looping.
+  - **Renderer** fills `{{variables}}` from `domain.User` in a single pass (user data is never re-parsed as a template), cleans and caps values, escapes per format, and re-checks the hard limits on the real text, because a real name can exceed the estimate.
+  - **Persistence:** `Message.CampaignMessages` maps to `domain.CampaignMessage`; `CampaignRepository.SaveDraftMessages` writes SMS subjects as `NULL` (the schema CHECK rejects `''`) and refuses to change campaigns that left `draft`.
+- **Trade-offs / not done:**
+  - SMS length follows the case's 160-character rule. Real carriers bill by encoding (GSM-7 vs UCS-2; most Turkish letters force UCS-2 with 70-char segments); a segment counter is a natural next step.
+  - The HTML check is a purpose-built whitelist tokenizer on the standard library rather than `golang.org/x/net/html`, to keep zero new dependencies. It rejects anything it does not understand instead of sanitising.
+  - The Anthropic transport is duplicated between `segment` and `composer` (~60 lines); extracting a shared `internal/llm` client is deferred until a third caller appears.
