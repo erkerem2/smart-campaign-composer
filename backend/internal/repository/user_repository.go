@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"smart-campaign-composer/backend/internal/domain"
 )
@@ -105,4 +106,66 @@ func scanUser(s rowScanner) (domain.User, error) {
 	u.OptInSMS = optInSMS == 1
 	u.OptInEmail = optInEmail == 1
 	return u, nil
+}
+
+// forEachChunk bounds the IN (...) list; SQLite's default variable limit is
+// far higher, but small chunks keep each read short.
+const forEachChunk = 500
+
+// ForEachByIDs loads the given users in id chunks and calls fn for each one
+// that exists, in id order within a chunk. Missing ids are skipped. Rows are
+// fully read and closed before fn runs, so fn may write to the database.
+func (r *UserRepository) ForEachByIDs(ctx context.Context, ids []int64, fn func(domain.User) error) error {
+	for start := 0; start < len(ids); start += forEachChunk {
+		chunk := ids[start:min(start+forEachChunk, len(ids))]
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			args[i] = id
+		}
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
+		rows, err := r.db.QueryContext(ctx,
+			"SELECT "+userColumns+" FROM users WHERE id IN ("+placeholders+") ORDER BY id", args...)
+		if err != nil {
+			return err
+		}
+		var users []domain.User
+		for rows.Next() {
+			u, err := scanUser(rows)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			users = append(users, u)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		for _, u := range users {
+			if err := fn(u); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// SetOptIn records a user's consent change for one channel (subscribe /
+// unsubscribe). The column name comes from a fixed map, never from input.
+func (r *UserRepository) SetOptIn(ctx context.Context, userID int64, ch domain.Channel, optIn bool) error {
+	col, ok := optInColumns[ch]
+	if !ok {
+		return fmt.Errorf("set opt-in: unsupported channel %q", ch)
+	}
+	res, err := r.db.ExecContext(ctx, "UPDATE users SET "+col+" = ? WHERE id = ?", boolToInt(optIn), userID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }

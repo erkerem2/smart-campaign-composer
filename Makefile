@@ -1,4 +1,4 @@
-.PHONY: test seed reseed run
+.PHONY: test seed reseed run mock-provider
 
 test:
 	$(MAKE) -C backend test
@@ -11,3 +11,6 @@ reseed:
 
 run:
 	$(MAKE) -C backend run
+
+mock-provider:
+	$(MAKE) -C backend mock-provider

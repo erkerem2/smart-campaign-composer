@@ -3,8 +3,16 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 	"time"
+)
+
+// Sentinel errors shared by storage adapters and use cases, so callers can
+// use errors.Is without depending on a concrete repository.
+var (
+	ErrNotFound       = errors.New("not found")
+	ErrStatusConflict = errors.New("campaign status changed concurrently")
 )
 
 // Channel limits mandated by the case (see CASE_SPEC.md).
@@ -89,16 +97,32 @@ func (s MessageStatus) Valid() bool {
 	return s == MessageStatusDraft || s == MessageStatusApproved
 }
 
-// DispatchStatus is the final outcome of delivering one message to one user.
+// DispatchStatus is the delivery state of one message to one user.
+//
+//	pending -> sent | failed
+//
+// A pending row is a claim: it is written before the provider is called, so
+// the (campaign, user, channel) slot is reserved exactly once even when
+// several workers or processes race. sent and failed are terminal.
 type DispatchStatus string
 
 const (
-	DispatchStatusSent   DispatchStatus = "sent"
-	DispatchStatusFailed DispatchStatus = "failed"
+	DispatchStatusPending DispatchStatus = "pending"
+	DispatchStatusSent    DispatchStatus = "sent"
+	DispatchStatusFailed  DispatchStatus = "failed"
 )
 
 // Valid reports whether s is a known dispatch status.
 func (s DispatchStatus) Valid() bool {
+	switch s {
+	case DispatchStatusPending, DispatchStatusSent, DispatchStatusFailed:
+		return true
+	}
+	return false
+}
+
+// Final reports whether s is a terminal dispatch state.
+func (s DispatchStatus) Final() bool {
 	return s == DispatchStatusSent || s == DispatchStatusFailed
 }
 
@@ -167,7 +191,20 @@ type DispatchLog struct {
 	Status            DispatchStatus `json:"status"`
 	ProviderMessageID string         `json:"provider_message_id,omitempty"`
 	RetryCount        int            `json:"retry_count"`
-	SentAt            *time.Time     `json:"sent_at,omitempty"`
+	// LastError is the reason of the final failure (empty when sent).
+	LastError string     `json:"last_error,omitempty"`
+	SentAt    *time.Time `json:"sent_at,omitempty"`
+}
+
+// DispatchCounts aggregates dispatch_logs rows of one campaign and channel.
+type DispatchCounts struct {
+	Total   int64 `json:"total"`
+	Pending int64 `json:"pending"`
+	Sent    int64 `json:"sent"`
+	Failed  int64 `json:"failed"`
+	// Retries is the number of retry attempts (not messages) recorded on
+	// finished rows.
+	Retries int64 `json:"retries"`
 }
 
 // IdempotencyKey returns the key sent to providers for this delivery.

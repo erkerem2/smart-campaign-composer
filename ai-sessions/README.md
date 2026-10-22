@@ -10,3 +10,6 @@ https://claude.ai/share/f649c6d2-ec15-44cd-853a-d5200ff6dfaa
 
 - **Session 03 - Campaign Message Composer & Validation Layer**
 https://claude.ai/share/c01ef460-0624-46dd-b8f2-4817dd1258d0
+
+- **Session 04 - Mock provider ve rate-limited dispatch**
+https://claude.ai/share/c511e334-6d3b-49a1-9969-44083a16cc5e

@@ -46,11 +46,14 @@ func TestStatusValid(t *testing.T) {
 	if MessageStatus("sent").Valid() {
 		t.Error("unknown message status accepted")
 	}
-	if DispatchStatus("pending").Valid() {
+	if DispatchStatus("queued").Valid() {
 		t.Error("unknown dispatch status accepted")
 	}
-	if !CampaignStatusFailed.Valid() || !MessageStatusApproved.Valid() || !DispatchStatusSent.Valid() {
+	if !CampaignStatusFailed.Valid() || !MessageStatusApproved.Valid() || !DispatchStatusSent.Valid() || !DispatchStatusPending.Valid() {
 		t.Error("known status rejected")
+	}
+	if DispatchStatusPending.Final() || !DispatchStatusSent.Final() || !DispatchStatusFailed.Final() {
+		t.Error("only sent and failed are terminal dispatch states")
 	}
 }
 

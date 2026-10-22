@@ -196,7 +196,7 @@ func TestDispatchLogUniquePerCampaignUserChannel(t *testing.T) {
 
 	insert := func(channel string) error {
 		_, err := db.Exec(`INSERT INTO dispatch_logs (campaign_id, user_id, channel, status, retry_count)
-			VALUES (?, ?, ?, 'sent', 0)`, campaignID, users[0].ID, channel)
+			VALUES (?, ?, ?, 'pending', 0)`, campaignID, users[0].ID, channel)
 		return err
 	}
 	if err := insert("sms"); err != nil {
@@ -264,7 +264,7 @@ func TestResetData(t *testing.T) {
 		t.Fatal(err)
 	}
 	campaignID := insertCampaign(t, db, "sending")
-	if _, err := db.Exec(`INSERT INTO dispatch_logs (campaign_id, user_id, channel, status) VALUES (?, ?, 'sms', 'sent')`,
+	if _, err := db.Exec(`INSERT INTO dispatch_logs (campaign_id, user_id, channel, status, sent_at) VALUES (?, ?, 'sms', 'sent', '2026-01-01T00:00:00Z')`,
 		campaignID, first[0].ID); err != nil {
 		t.Fatal(err)
 	}

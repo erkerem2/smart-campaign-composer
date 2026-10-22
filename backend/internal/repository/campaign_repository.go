@@ -143,3 +143,72 @@ func (r *CampaignRepository) Messages(ctx context.Context, campaignID int64) ([]
 	}
 	return out, rows.Err()
 }
+
+// ErrStatusConflict is returned by TransitionStatus when the campaign is not
+// in the expected status (another request changed it first).
+var ErrStatusConflict = domain.ErrStatusConflict
+
+// ErrNoMessages is returned when a campaign without content is approved.
+var ErrNoMessages = errors.New("campaign has no messages")
+
+// TransitionStatus moves a campaign from one status to another with a
+// compare-and-set UPDATE. Only transitions allowed by domain are accepted,
+// and exactly one of several concurrent callers can win (e.g. two "send"
+// clicks: only one moves approved -> sending).
+func (r *CampaignRepository) TransitionStatus(ctx context.Context, id int64, from, to domain.CampaignStatus) error {
+	if !from.CanTransitionTo(to) {
+		return fmt.Errorf("campaign %d: transition %s -> %s is not allowed", id, from, to)
+	}
+	res, err := r.db.ExecContext(ctx, "UPDATE campaigns SET status = ? WHERE id = ? AND status = ?",
+		string(to), id, string(from))
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 1 {
+		return nil
+	}
+	if _, err := r.GetByID(ctx, id); err != nil {
+		return err // ErrNotFound
+	}
+	return ErrStatusConflict
+}
+
+// Approve is the human approval step: it marks every message of a draft
+// campaign as approved and moves the campaign to approved, atomically.
+// Approved content is immutable (SaveDraftMessages refuses it).
+func (r *CampaignRepository) Approve(ctx context.Context, id int64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var status string
+	err = tx.QueryRowContext(ctx, "SELECT status FROM campaigns WHERE id = ?", id).Scan(&status)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if domain.CampaignStatus(status) != domain.CampaignStatusDraft {
+		return ErrCampaignNotDraft
+	}
+	res, err := tx.ExecContext(ctx, "UPDATE campaign_messages SET status = 'approved' WHERE campaign_id = ?", id)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return err
+	} else if n == 0 {
+		return ErrNoMessages
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE campaigns SET status = 'approved' WHERE id = ? AND status = 'draft'", id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}

@@ -8,7 +8,10 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+
+	"smart-campaign-composer/backend/internal/domain"
 
 	// Pure-Go SQLite driver: no CGO, no gcc, works the same on Windows,
 	// macOS, Linux and in a scratch Docker image. Registers as "sqlite".
@@ -18,8 +21,10 @@ import (
 // DriverName is the database/sql driver used for SQLite.
 const DriverName = "sqlite"
 
-// ErrNotFound is returned when a requested row does not exist.
-var ErrNotFound = errors.New("not found")
+// ErrNotFound is returned when a requested row does not exist. It is the
+// domain sentinel, so use cases can test for it without importing this
+// package.
+var ErrNotFound = domain.ErrNotFound
 
 //go:embed schema.sql
 var schemaSQL string
@@ -52,10 +57,97 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 	return db, nil
 }
 
-// Migrate creates all tables and indexes. It is idempotent.
+// SchemaVersion is stored in SQLite's PRAGMA user_version.
+//
+//	1  initial schema (ADR 003)
+//	2  dispatch_logs gains the 'pending' claim state, last_error and
+//	   created_at/updated_at (ADR 007)
+const SchemaVersion = 2
+
+// Migrate brings the database to SchemaVersion. It is idempotent and runs in
+// one transaction, so a failed upgrade leaves the previous schema intact.
+//
+// schema.sql always describes the latest schema with CREATE ... IF NOT
+// EXISTS, so a fresh database is created at the latest version directly.
+// Older databases are upgraded by the steps below before schema.sql runs.
 func Migrate(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var version int
+	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		return fmt.Errorf("migrate: read user_version: %w", err)
+	}
+
+	legacyDispatchLogs := false
+	if version < 2 {
+		if legacyDispatchLogs, err = detachLegacyDispatchLogs(ctx, tx); err != nil {
+			return fmt.Errorf("migrate v2: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
+		return fmt.Errorf("migrate: %w", err)
+	}
+	if legacyDispatchLogs {
+		if err := copyLegacyDispatchLogs(ctx, tx); err != nil {
+			return fmt.Errorf("migrate v2: %w", err)
+		}
+	}
+	if version < SchemaVersion {
+		// PRAGMA does not accept bind parameters; SchemaVersion is a Go constant.
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", SchemaVersion)); err != nil {
+			return fmt.Errorf("migrate: write user_version: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+// detachLegacyDispatchLogs renames a version-1 dispatch_logs table (whose
+// CHECK constraint does not allow 'pending') out of the way. SQLite cannot
+// alter a CHECK constraint in place, so the table is rebuilt: schema.sql
+// then creates the new table and copyLegacyDispatchLogs moves the rows over.
+func detachLegacyDispatchLogs(ctx context.Context, tx *sql.Tx) (bool, error) {
+	var ddl string
+	err := tx.QueryRowContext(ctx,
+		"SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'dispatch_logs'").Scan(&ddl)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil // fresh database
+	}
+	if err != nil {
+		return false, err
+	}
+	if strings.Contains(ddl, "'pending'") {
+		return false, nil // already the v2 table (created by a newer schema.sql)
+	}
+	for _, stmt := range []string{
+		"ALTER TABLE dispatch_logs RENAME TO dispatch_logs_v1",
+		// The index keeps its name after the rename; drop it so schema.sql
+		// recreates it on the new table.
+		"DROP INDEX IF EXISTS idx_dispatch_logs_campaign_status",
+	} {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return false, fmt.Errorf("%s: %w", stmt, err)
+		}
+	}
+	return true, nil
+}
+
+func copyLegacyDispatchLogs(ctx context.Context, tx *sql.Tx) error {
+	now := formatTime(time.Now())
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO dispatch_logs (id, campaign_id, user_id, channel, status, provider_message_id,
+			retry_count, sent_at, created_at, updated_at)
+		SELECT id, campaign_id, user_id, channel, status, provider_message_id, retry_count,
+			CASE WHEN status = 'sent' THEN COALESCE(sent_at, ?1) ELSE sent_at END,
+			COALESCE(sent_at, ?1), COALESCE(sent_at, ?1)
+		FROM dispatch_logs_v1`, now); err != nil {
+		return fmt.Errorf("copy rows: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "DROP TABLE dispatch_logs_v1"); err != nil {
+		return fmt.Errorf("drop legacy table: %w", err)
 	}
 	return nil
 }
