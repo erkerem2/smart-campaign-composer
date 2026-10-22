@@ -43,3 +43,13 @@
   - Emails use RFC 2606 reserved domains (`example.com/.net/.org`), so no generated address can belong to a real mailbox.
   - Canonical city spelling is `İstanbul`; the segment validator must normalise LLM output (`Istanbul`, `istanbul`) to it.
   - The command is idempotent (skips when users exist, `-reset` to reseed), so it can run on every `docker compose up`.
+
+## ADR 005: Safe Segment Engine & AST Validation (Zero Raw SQL from LLM)
+- **Status:** Accepted
+- **Context:** Marketers describe campaign briefs in natural language. Executing LLM-generated raw SQL directly against the database introduces severe SQL injection vulnerabilities and unpredictable query execution.
+- **Decision:** 
+  - Constrained Claude to output a structured JSON Abstract Syntax Tree (AST) using Anthropic Tool Calling / Structured Output.
+  - Built an in-engine whitelist validator in Go that only permits known attributes (`city`, `age`, `total_spend`, `cart_last_active_days`, `has_purchased_since_cart`) and comparison operators (`EQUALS`, `LESS_THAN_OR_EQUAL`, `IN`, etc.).
+  - Implemented custom Turkish character normalization (case folding for I/İ/ı, diacritics, and 81 city aliases) to handle inputs safely without raw text matching.
+  - Parameterized SQL compiler builds queries (`?`) strictly from internal Go constants, ensuring placeholder and argument counts match under fuzz testing.
+  - Implemented `MockLLMClient` returning deterministic ASTs for zero-cost automated unit and integration tests without external API dependencies.
