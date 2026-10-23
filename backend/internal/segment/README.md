@@ -41,23 +41,30 @@ Map errors with `errors.Is` (`ErrUnknownField`, `ErrUnsupportedOperator`, `ErrIn
 
 Logic: `AND`, `OR`, `NOT` (exactly one child). Limits: depth 4, 20 conditions, 50 list items, 16 KB.
 
-## Wiring into the existing project
+## Storage: the `v_users_segment` view (ADR 008)
 
-- **Schema:** the registry expects `users(city, age, total_spend, cart_last_active_days,
-  has_purchased_since_cart, opt_in_sms, opt_in_email)`. If some of these are derived
-  (e.g. from orders/cart_events), create a VIEW and pass its name as the registry table.
-  Column names must be plain identifiers — `NewRegistry` rejects expressions on purpose.
+`DefaultRegistry` reads the view `v_users_segment` (defined in `internal/repository/schema.sql`,
+recreated by every `repository.Migrate`), never the `users` table. The view exposes `id`, `city`,
+`age`, `total_spend`, the opt-in flags and two attributes derived from stored timestamps at query time:
+
+| column | derivation |
+|---|---|
+| `cart_last_active_days` | whole days since `cart_last_active_at`, **rounded up** (integer seconds, clamped at 0); NULL without cart activity. `<= 30` ⇔ activity within the last 30 × 24 h |
+| `has_purchased_since_cart` | 1 if `last_purchase_at >= cart_last_active_at`, else 0 (also 0 without a cart) |
+
+No PII (name, e-mail, phone) is visible through the view. `repository.TestSegmentViewMatchesRegistryAndHidesPII`
+fails if the view and the registry drift apart.
+
+- **Dispatch:** `Engine.MatchingIDs(ctx, rule)` returns the matching user ids (opt-in not applied;
+  the dispatcher checks it per channel). `Engine.Validate(raw)` re-validates a stored or edited rule.
 - **City normalisation on write:** call `segment.NormalizeCity` in the seeder/ingest path
   so the column only holds canonical names. Rule values are normalised on read too.
-- **Seed counts:** tests use their own deterministic 3,000-user fixture
-  (`seed_helpers_test.go`). Swap `openSeededDB` for the real seeder and update the pinned
-  `wantReference`; the oracle comparison keeps working unchanged.
 - **Driver:** only tests import one (`sqlite_driver_test.go`); the package itself uses
   `database/sql` only.
 
 ## Tests
 
 ```
-go test ./internal/segment -race
+go test ./internal/segment -race          # unit + fixture + real 3,000-user seed through the view
 go test ./internal/segment -run=^$ -fuzz=FuzzParseBuild -fuzztime=30s
 ```

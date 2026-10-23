@@ -1,7 +1,13 @@
-.PHONY: test seed reseed run mock-provider
+.PHONY: test test-short test-e2e seed reseed run mock-provider
 
 test:
 	$(MAKE) -C backend test
+
+test-short:
+	$(MAKE) -C backend test-short
+
+test-e2e:
+	$(MAKE) -C backend test-e2e
 
 seed:
 	$(MAKE) -C backend seed

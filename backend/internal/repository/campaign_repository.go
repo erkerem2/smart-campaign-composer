@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -45,9 +46,10 @@ func (r *CampaignRepository) GetByID(ctx context.Context, id int64) (domain.Camp
 		c         domain.Campaign
 		status    string
 		createdAt string
+		rule      sql.NullString
 	)
-	err := r.db.QueryRowContext(ctx, "SELECT id, brief, status, created_at FROM campaigns WHERE id = ?", id).
-		Scan(&c.ID, &c.Brief, &status, &createdAt)
+	err := r.db.QueryRowContext(ctx, "SELECT id, brief, status, created_at, segment_rule FROM campaigns WHERE id = ?", id).
+		Scan(&c.ID, &c.Brief, &status, &createdAt, &rule)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.Campaign{}, ErrNotFound
 	}
@@ -55,6 +57,9 @@ func (r *CampaignRepository) GetByID(ctx context.Context, id int64) (domain.Camp
 		return domain.Campaign{}, err
 	}
 	c.Status = domain.CampaignStatus(status)
+	if rule.Valid {
+		c.SegmentRule = json.RawMessage(rule.String)
+	}
 	if c.CreatedAt, err = parseTime(createdAt); err != nil {
 		return domain.Campaign{}, err
 	}
@@ -86,6 +91,15 @@ func (r *CampaignRepository) SaveDraftMessages(ctx context.Context, campaignID i
 	if _, err := tx.ExecContext(ctx, "DELETE FROM campaign_messages WHERE campaign_id = ?", campaignID); err != nil {
 		return fmt.Errorf("delete old messages: %w", err)
 	}
+	if err := insertMessages(ctx, tx, campaignID, msgs, domain.MessageStatusDraft); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// insertMessages writes one row per channel. status is used for messages
+// that do not carry their own.
+func insertMessages(ctx context.Context, tx *sql.Tx, campaignID int64, msgs []domain.CampaignMessage, status domain.MessageStatus) error {
 	seen := map[domain.Channel]bool{}
 	for i := range msgs {
 		m := &msgs[i]
@@ -93,9 +107,9 @@ func (r *CampaignRepository) SaveDraftMessages(ctx context.Context, campaignID i
 			return fmt.Errorf("message %d: invalid or duplicate channel %q", i, m.Channel)
 		}
 		seen[m.Channel] = true
-		status := m.Status
-		if status == "" {
-			status = domain.MessageStatusDraft
+		st := m.Status
+		if st == "" {
+			st = status
 		}
 		// SMS has no subject column value at all (NULL), e-mail always has one.
 		var subject sql.NullString
@@ -106,16 +120,67 @@ func (r *CampaignRepository) SaveDraftMessages(ctx context.Context, campaignID i
 		}
 		res, err := tx.ExecContext(ctx,
 			"INSERT INTO campaign_messages (campaign_id, channel, content, subject, status) VALUES (?, ?, ?, ?, ?)",
-			campaignID, string(m.Channel), m.Content, subject, string(status))
+			campaignID, string(m.Channel), m.Content, subject, string(st))
 		if err != nil {
 			return fmt.Errorf("insert %s message: %w", m.Channel, err)
 		}
 		if m.ID, err = res.LastInsertId(); err != nil {
 			return err
 		}
-		m.CampaignID, m.Status = campaignID, status
+		m.CampaignID, m.Status = campaignID, st
 	}
-	return tx.Commit()
+	return nil
+}
+
+// ErrMissingSegmentRule is returned when a campaign is approved without an
+// audience rule.
+var ErrMissingSegmentRule = errors.New("campaign has no segment rule")
+
+// CreateApproved stores a campaign the marketer has reviewed and approved in
+// one step: the campaign row (status approved, with its validated segment
+// rule) and its per-channel messages (status approved) are written in a
+// single transaction, so a half-created campaign can never be dispatched.
+//
+// Callers pass a rule that went through the segment parser (canonical JSON)
+// and content that passed composer validation; the schema CHECKs
+// (json_valid, SMS without subject, ...) are the last line of defence.
+func (r *CampaignRepository) CreateApproved(ctx context.Context, brief string, rule json.RawMessage,
+	msgs []domain.CampaignMessage, now time.Time) (domain.Campaign, error) {
+	if len(rule) == 0 {
+		return domain.Campaign{}, ErrMissingSegmentRule
+	}
+	if len(msgs) == 0 {
+		return domain.Campaign{}, ErrNoMessages
+	}
+	c := domain.Campaign{
+		Brief: strings.TrimSpace(brief), Status: domain.CampaignStatusApproved,
+		CreatedAt: now.UTC().Truncate(time.Second), SegmentRule: append(json.RawMessage(nil), rule...),
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return domain.Campaign{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx,
+		"INSERT INTO campaigns (brief, status, created_at, segment_rule) VALUES (?, ?, ?, ?)",
+		c.Brief, string(c.Status), formatTime(c.CreatedAt), string(c.SegmentRule))
+	if err != nil {
+		return domain.Campaign{}, fmt.Errorf("insert campaign: %w", err)
+	}
+	if c.ID, err = res.LastInsertId(); err != nil {
+		return domain.Campaign{}, err
+	}
+	for i := range msgs {
+		msgs[i].Status = domain.MessageStatusApproved
+	}
+	if err := insertMessages(ctx, tx, c.ID, msgs, domain.MessageStatusApproved); err != nil {
+		return domain.Campaign{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return domain.Campaign{}, err
+	}
+	return c, nil
 }
 
 // Messages returns the messages of a campaign, SMS first.

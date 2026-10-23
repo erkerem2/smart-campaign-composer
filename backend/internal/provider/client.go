@@ -143,3 +143,22 @@ func errorCode(body []byte, fallback string) string {
 	}
 	return fallback
 }
+
+// Ping checks the provider's GET /healthz. It is used by the API health
+// check; dispatch never depends on it.
+func (c *Client) Ping(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/healthz", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("provider unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("provider health: %s", resp.Status)
+	}
+	return nil
+}

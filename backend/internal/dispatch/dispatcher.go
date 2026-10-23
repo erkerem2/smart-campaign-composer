@@ -254,6 +254,19 @@ func (d *Dispatcher) approvedMessages(ctx context.Context, campaignID int64) (ma
 	return out, nil
 }
 
+// ActiveRuns returns the number of runs currently in progress (health).
+func (d *Dispatcher) ActiveRuns() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	n := 0
+	for _, r := range d.runs {
+		if !isClosed(r.done) {
+			n++
+		}
+	}
+	return n
+}
+
 // Wait blocks until every run has finished (after cancelling their context
 // on shutdown).
 func (d *Dispatcher) Wait() { d.wg.Wait() }
@@ -265,7 +278,7 @@ func (d *Dispatcher) Stats(ctx context.Context, campaignID int64) (Stats, error)
 	run := d.runs[campaignID]
 	d.mu.Unlock()
 	if run != nil {
-		return run.progress.snapshot(!isClosed(run.done)), nil
+		return run.progress.snapshot(!isClosed(run.done), d.clock.Now()), nil
 	}
 	c, err := d.campaigns.GetByID(ctx, campaignID)
 	if err != nil {
@@ -319,7 +332,7 @@ func (d *Dispatcher) execute(ctx context.Context, run *Run, audience AudienceSou
 	}
 
 	final, state := domain.CampaignStatusCompleted, StateCompleted
-	snap := p.snapshot(true)
+	snap := p.snapshot(true, d.clock.Now())
 	if snap.Total > 0 && snap.Sent == 0 {
 		final, state = domain.CampaignStatusFailed, StateFailed
 	}

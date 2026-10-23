@@ -3,6 +3,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -166,6 +167,9 @@ type Campaign struct {
 	Brief     string         `json:"brief"`
 	Status    CampaignStatus `json:"status"`
 	CreatedAt time.Time      `json:"created_at"`
+	// SegmentRule is the canonical JSON rule tree (never SQL) the marketer
+	// approved. It is opaque here; internal/segment validates it on read.
+	SegmentRule json.RawMessage `json:"segment_rule,omitempty"`
 }
 
 // CampaignMessage is the per-channel content of a campaign.

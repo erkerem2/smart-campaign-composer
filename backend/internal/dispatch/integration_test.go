@@ -287,6 +287,19 @@ func TestDispatchThroughFlakyProvider(t *testing.T) {
 		s.Sent+s.Failed != s.Total || s.Pending != 0 {
 		t.Fatalf("stats = %+v", s)
 	}
+	// Speed is the run's average throughput: positive, frozen once the run
+	// finished, and never above the per-channel cap.
+	if s.Speed <= 0 || s.Elapsed <= 0 || s.FinishedAt == nil {
+		t.Fatalf("speed/elapsed not reported: %+v", s)
+	}
+	for ch, cs := range s.Channels {
+		if cs.Speed <= 0 || cs.Speed > 100 {
+			t.Fatalf("%s speed = %.1f msg/s, want (0, 100]", ch, cs.Speed)
+		}
+	}
+	if again, _ := d.Stats(ctx, w.campaignID); again.Speed != s.Speed {
+		t.Fatalf("speed of a finished run must not drift: %.1f then %.1f", s.Speed, again.Speed)
+	}
 	if s.Retried != int64(len(attempts)-len(byKey)) {
 		t.Fatalf("retried = %d, provider saw %d retry attempts", s.Retried, len(attempts)-len(byKey))
 	}

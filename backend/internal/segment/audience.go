@@ -43,6 +43,38 @@ func (c *AudienceCounter) Query(rule *Node) (string, []any, error) {
 	return q, w.Args, nil
 }
 
+// idColumn is the primary key every segment table or view must expose; it is
+// a Go constant, never input.
+const idColumn = "id"
+
+// MatchingIDs returns the ids of every user matching a validated rule, in id
+// order. Dispatch resolves the recipients of an approved campaign with it;
+// opt-in is NOT applied here, the dispatcher checks it per channel.
+func (c *AudienceCounter) MatchingIDs(ctx context.Context, rule *Node) ([]int64, error) {
+	w, err := c.builder.Build(rule)
+	if err != nil {
+		return nil, err
+	}
+	q := fmt.Sprintf("SELECT %[1]s FROM %[2]s WHERE %[3]s ORDER BY %[1]s", idColumn, c.reg.Table, w.SQL)
+	rows, err := c.db.QueryContext(ctx, q, w.Args...)
+	if err != nil {
+		return nil, fmt.Errorf("segment: audience ids: %w", err)
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("segment: audience ids: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("segment: audience ids: %w", err)
+	}
+	return ids, nil
+}
+
 // Count runs a single aggregate query (one round-trip, one table scan).
 func (c *AudienceCounter) Count(ctx context.Context, rule *Node) (AudienceCounts, error) {
 	q, args, err := c.Query(rule)

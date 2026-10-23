@@ -92,6 +92,22 @@ func (e *Engine) PreviewJSON(ctx context.Context, rawRule []byte) (*Preview, err
 	return &Preview{Rule: rule, Audience: counts}, nil
 }
 
+// Validate parses and validates a rule tree from JSON (a rule edited in the
+// UI, or one read back from the database) with the same strict rules as LLM
+// output. It never touches the database.
+func (e *Engine) Validate(rawRule []byte) (*Node, error) { return e.Parser.Parse(rawRule) }
+
+// MatchingIDs returns the ids of the users a validated rule selects.
+func (e *Engine) MatchingIDs(ctx context.Context, rule *Node) ([]int64, error) {
+	if e.QueryTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, e.QueryTimeout)
+		defer cancel()
+	}
+	return e.Counter.MatchingIDs(ctx, rule)
+}
+
+// CountRule counts the audience of a validated rule.
 func (e *Engine) CountRule(ctx context.Context, rule *Node) (AudienceCounts, error) {
 	if e.QueryTimeout > 0 {
 		var cancel context.CancelFunc

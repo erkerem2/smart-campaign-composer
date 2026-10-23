@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +29,10 @@ type ChannelStats struct {
 	Pending   int64 `json:"pending"` // total - processed
 	OptedOut  int64 `json:"opted_out"`
 	Skipped   int64 `json:"skipped"` // already dispatched earlier / duplicate in audience
+	// Speed is the average throughput of the run in messages per second
+	// (sent + failed over the elapsed time). It stays below the channel rate
+	// limit (100/s); 0 when no run is known in this process.
+	Speed float64 `json:"speed"`
 }
 
 // Stats is the live state of one campaign's dispatch.
@@ -43,6 +48,8 @@ type Stats struct {
 	Pending    int64                           `json:"pending"`
 	OptedOut   int64                           `json:"opted_out"`
 	Skipped    int64                           `json:"skipped"`
+	Speed      float64                         `json:"speed"`           // messages/s over the run, all channels
+	Elapsed    float64                         `json:"elapsed_seconds"` // run duration so far (or total, once finished)
 	Channels   map[domain.Channel]ChannelStats `json:"channels"`
 	StartedAt  *time.Time                      `json:"started_at,omitempty"`
 	FinishedAt *time.Time                      `json:"finished_at,omitempty"`
@@ -92,7 +99,9 @@ func (p *progress) setState(state string, at time.Time, err error) {
 	}
 }
 
-func (p *progress) snapshot(live bool) Stats {
+// snapshot copies the counters. now is used for the elapsed time and speed
+// of a run that has not finished yet.
+func (p *progress) snapshot(live bool, now time.Time) Stats {
 	p.mu.Lock()
 	s := Stats{CampaignID: p.campaignID, State: p.state, Live: live, Error: p.err,
 		Channels: make(map[domain.Channel]ChannelStats, len(p.channels))}
@@ -102,7 +111,15 @@ func (p *progress) snapshot(live bool) Stats {
 		f := p.finished
 		s.FinishedAt = &f
 	}
+	end := now
+	if !p.finished.IsZero() {
+		end = p.finished
+	}
 	p.mu.Unlock()
+	elapsed := end.Sub(started).Seconds()
+	if elapsed > 0 {
+		s.Elapsed = math.Round(elapsed*10) / 10
+	}
 
 	for ch, c := range p.channels {
 		cs := ChannelStats{
@@ -111,10 +128,20 @@ func (p *progress) snapshot(live bool) Stats {
 		}
 		cs.Processed = cs.Sent + cs.Failed
 		cs.Pending = cs.Total - cs.Processed
+		cs.Speed = rate(cs.Processed, elapsed)
 		s.Channels[ch] = cs
 		s.add(cs)
 	}
+	s.Speed = rate(s.Processed, elapsed)
 	return s
+}
+
+// rate returns n per second, rounded to 0.1 for display.
+func rate(n int64, seconds float64) float64 {
+	if seconds <= 0 {
+		return 0
+	}
+	return math.Round(float64(n)/seconds*10) / 10
 }
 
 func (s *Stats) add(c ChannelStats) {

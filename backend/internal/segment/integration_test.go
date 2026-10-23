@@ -202,7 +202,7 @@ func TestQueryUsesOnlyBindArgs(t *testing.T) {
 	want := "SELECT COUNT(*), COALESCE(SUM(CASE WHEN opt_in_sms THEN 1 ELSE 0 END), 0), " +
 		"COALESCE(SUM(CASE WHEN opt_in_email THEN 1 ELSE 0 END), 0), " +
 		"COALESCE(SUM(CASE WHEN opt_in_sms OR opt_in_email THEN 1 ELSE 0 END), 0) " +
-		"FROM users WHERE (city = ? AND cart_last_active_days <= ? AND has_purchased_since_cart = ?)"
+		"FROM v_users_segment WHERE (city = ? AND cart_last_active_days <= ? AND has_purchased_since_cart = ?)"
 	if q != want {
 		t.Errorf("query\n got: %s\nwant: %s", q, want)
 	}

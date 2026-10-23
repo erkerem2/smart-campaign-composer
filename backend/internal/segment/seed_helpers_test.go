@@ -42,7 +42,11 @@ CREATE TABLE users (
 	opt_in_email              INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_users_city ON users(city);
-CREATE INDEX idx_users_cart ON users(cart_last_active_days);`
+CREATE INDEX idx_users_cart ON users(cart_last_active_days);
+-- DefaultRegistry reads v_users_segment. In this fixture the derived columns
+-- are stored, so the view is a plain projection; the real derivation is in
+-- internal/repository/schema.sql (see view_seed_test.go).
+CREATE VIEW v_users_segment AS SELECT * FROM users;`
 
 // Raw city spellings as they might arrive from different sources. The seeder
 // normalises them on write with segment.NormalizeCity.

@@ -50,6 +50,7 @@ type MockLLMClient struct {
 	responses map[string]json.RawMessage
 	Err       error // if set, every call fails with it
 	Requests  []RuleRequest
+	fallback  json.RawMessage
 }
 
 // NewMockLLMClient is pre-loaded with ReferenceBrief → ReferenceRule.
@@ -67,6 +68,16 @@ func (m *MockLLMClient) On(brief, rawJSON string) *MockLLMClient {
 	return m
 }
 
+// Default sets the raw JSON returned for briefs without a canned response
+// (local development without an API key: every brief gets a rule). Tests
+// that need "unknown brief" errors simply do not set it.
+func (m *MockLLMClient) Default(rawJSON string) *MockLLMClient {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fallback = json.RawMessage(rawJSON)
+	return m
+}
+
 func (m *MockLLMClient) GenerateRule(_ context.Context, req RuleRequest) (json.RawMessage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -75,6 +86,9 @@ func (m *MockLLMClient) GenerateRule(_ context.Context, req RuleRequest) (json.R
 		return nil, m.Err
 	}
 	resp, ok := m.responses[mockKey(req.Brief)]
+	if !ok && m.fallback != nil {
+		resp, ok = m.fallback, true
+	}
 	if !ok {
 		return nil, fmt.Errorf("mock llm: no canned response for brief %q", truncate(req.Brief))
 	}

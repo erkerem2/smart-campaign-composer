@@ -62,7 +62,13 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 //	1  initial schema (ADR 003)
 //	2  dispatch_logs gains the 'pending' claim state, last_error and
 //	   created_at/updated_at (ADR 007)
-const SchemaVersion = 2
+//	3  v_users_segment view with the derived segment attributes, and
+//	   campaigns.segment_rule for the approved rule (ADR 008)
+const SchemaVersion = 3
+
+// SegmentView is the view the segment engine queries (see schema.sql). It
+// must match segment.DefaultRegistry.Table; a repository test enforces it.
+const SegmentView = "v_users_segment"
 
 // Migrate brings the database to SchemaVersion. It is idempotent and runs in
 // one transaction, so a failed upgrade leaves the previous schema intact.
@@ -88,6 +94,13 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("migrate v2: %w", err)
 		}
 	}
+	if version < 3 {
+		if err := addCampaignSegmentRule(ctx, tx); err != nil {
+			return fmt.Errorf("migrate v3: %w", err)
+		}
+	}
+	// schema.sql also drops and recreates v_users_segment, so the view
+	// always matches the current definition.
 	if _, err := tx.ExecContext(ctx, schemaSQL); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
@@ -133,6 +146,30 @@ func detachLegacyDispatchLogs(ctx context.Context, tx *sql.Tx) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// addCampaignSegmentRule adds campaigns.segment_rule to a pre-v3 database.
+// A fresh database gets the column from schema.sql directly. Adding a
+// nullable column is an in-place ALTER in SQLite (no table rebuild).
+func addCampaignSegmentRule(ctx context.Context, tx *sql.Tx) error {
+	var tables, columns int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'campaigns'").Scan(&tables); err != nil {
+		return err
+	}
+	if tables == 0 {
+		return nil // fresh database
+	}
+	if err := tx.QueryRowContext(ctx,
+		"SELECT count(*) FROM pragma_table_info('campaigns') WHERE name = 'segment_rule'").Scan(&columns); err != nil {
+		return err
+	}
+	if columns > 0 {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `ALTER TABLE campaigns ADD COLUMN segment_rule TEXT
+		CHECK (segment_rule IS NULL OR json_valid(segment_rule))`)
+	return err
 }
 
 func copyLegacyDispatchLogs(ctx context.Context, tx *sql.Tx) error {

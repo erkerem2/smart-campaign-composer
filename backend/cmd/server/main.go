@@ -1,20 +1,24 @@
-// Command server runs the Smart Campaign Composer HTTP API.
+// Command server runs the Smart Campaign Composer HTTP API (internal/api):
 //
-// It opens and migrates the database, wires the dispatch engine to the mock
-// provider and exposes health and live dispatch-tracking endpoints:
+//	GET  /healthz
+//	POST /api/campaigns/preview-segment
+//	POST /api/campaigns/compose/stream          (SSE)
+//	POST /api/campaigns
+//	GET  /api/campaigns/{id}
+//	POST /api/campaigns/{id}/dispatch
+//	GET  /api/campaigns/{id}/dispatch
+//	GET  /api/campaigns/{id}/dispatch/stream    (SSE)
 //
-//	GET /healthz                                   database + provider checks
-//	GET /api/campaigns/{id}/dispatch               dispatch stats snapshot (JSON)
-//	GET /api/campaigns/{id}/dispatch/stream        live stats (Server-Sent Events)
-//
-// Environment: HTTP_ADDR (:8080), DB_PATH (data/campaign.db),
-// PROVIDER_URL (http://localhost:9090, see cmd/mock-provider).
+// Configuration comes from the environment, optionally from a .env file in
+// the working directory or its parent (the repository root when run from
+// backend/): HTTP_ADDR (:8080), DB_PATH (data/campaign.db), PROVIDER_URL
+// (http://localhost:9090, see cmd/mock-provider), CORS_ALLOWED_ORIGINS,
+// ANTHROPIC_API_KEY (unset = mock LLM mode), ANTHROPIC_MODEL.
 package main
 
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -22,14 +26,19 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
+	"smart-campaign-composer/backend/internal/api"
+	"smart-campaign-composer/backend/internal/composer"
+	"smart-campaign-composer/backend/internal/config"
 	"smart-campaign-composer/backend/internal/dispatch"
 	"smart-campaign-composer/backend/internal/provider"
 	"smart-campaign-composer/backend/internal/repository"
+	"smart-campaign-composer/backend/internal/segment"
 )
+
+const version = "0.5.0"
 
 func main() {
 	if err := run(); err != nil {
@@ -39,34 +48,51 @@ func main() {
 }
 
 func run() error {
-	addr := envOr("HTTP_ADDR", ":8080")
-	dbPath := envOr("DB_PATH", filepath.Join("data", "campaign.db"))
-	providerURL := envOr("PROVIDER_URL", "http://localhost:9090")
+	if loaded, err := config.LoadDotEnv(".env", filepath.Join("..", ".env")); err != nil {
+		return fmt.Errorf("load .env: %w", err)
+	} else if loaded != "" {
+		slog.Info("loaded environment file", "path", loaded)
+	}
+	cfg, err := config.FromEnv()
+	if err != nil {
+		return err
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if dir := filepath.Dir(dbPath); dir != "." {
+	if dir := filepath.Dir(cfg.DBPath); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("create db directory: %w", err)
 		}
 	}
-	db, err := repository.Open(ctx, dbPath)
+	db, err := repository.Open(ctx, cfg.DBPath)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	// Migrate also (re)creates the v_users_segment view the segment engine
+	// reads (schema version 3).
 	if err := repository.Migrate(ctx, db); err != nil {
 		return err
 	}
+	users := repository.NewUserRepository(db)
+	if n, err := users.Count(ctx); err != nil {
+		return err
+	} else if n == 0 {
+		slog.Warn("no users in the database; run `make seed` first", "db", cfg.DBPath)
+	}
 
-	// Runs are started with the server's lifetime context (the start/resume
-	// endpoints arrive with the campaign API) and drained on shutdown;
-	// interrupted runs stay 'sending' and can be resumed.
+	segmentLLM, messageLLM, err := llmClients(cfg)
+	if err != nil {
+		return err
+	}
+	campaigns := repository.NewCampaignRepository(db)
+	providerClient := provider.NewClient(cfg.ProviderURL, nil)
 	dispatcher, err := dispatch.New(
 		repository.NewDispatchRepository(db),
-		repository.NewCampaignRepository(db),
-		provider.NewClient(providerURL, nil),
+		campaigns,
+		providerClient,
 		dispatch.NewComposerRenderer(nil),
 		dispatch.DefaultConfig(),
 	)
@@ -74,20 +100,44 @@ func run() error {
 		return err
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", healthHandler(db, providerURL))
-	mux.HandleFunc("GET /api/campaigns/{id}/dispatch", dispatcher.StatsHandler())
-	mux.HandleFunc("GET /api/campaigns/{id}/dispatch/stream", dispatcher.StreamHandler(500*time.Millisecond))
+	corsOrigins := api.DefaultCORSOrigins()
+	if cfg.CORSOrigins != "" {
+		corsOrigins = api.ParseOrigins(cfg.CORSOrigins)
+	}
+	server, err := api.New(api.Config{
+		Segments:   segment.NewEngine(segmentLLM, db, segment.DefaultRegistry, segment.SQLite{}),
+		Composer:   composer.NewComposer(messageLLM, nil),
+		Campaigns:  campaigns,
+		Users:      users,
+		Dispatcher: dispatcher,
+		Health: []api.HealthCheck{
+			{Name: "database", Critical: true, Check: func(ctx context.Context) error { return pingDB(ctx, db) }},
+			{Name: "provider", Check: providerClient.Ping},
+		},
+		// Dispatch runs live as long as the server, not the request.
+		BaseContext: ctx,
+		CORS:        api.CORSConfig{AllowedOrigins: corsOrigins},
+		LLMMode:     cfg.LLMMode(),
+		Version:     version,
+	})
+	if err != nil {
+		return err
+	}
 
 	srv := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
+		Addr:              cfg.HTTPAddr,
+		Handler:           server.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		// No WriteTimeout: SSE responses stay open for the whole generation
+		// or dispatch run; they end when the client disconnects.
 	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("listening", "addr", addr, "db", dbPath)
+		slog.Info("listening", "addr", cfg.HTTPAddr, "db", cfg.DBPath, "provider", cfg.ProviderURL,
+			"llm", cfg.LLMMode(), "cors", corsOrigins)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
@@ -104,46 +154,41 @@ func run() error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	err = srv.Shutdown(shutdownCtx)
+	// ctx is cancelled: active runs stop, their pending deliveries stay
+	// claimed and the campaign stays 'sending' (POST .../dispatch resumes).
 	dispatcher.Wait()
 	return err
 }
 
-// healthHandler reports 200 when the database answers, 503 otherwise. The
-// provider is reported but does not make the API unhealthy: dispatch retries
-// through provider outages and the rest of the API keeps working.
-func healthHandler(db *sql.DB, providerURL string) http.HandlerFunc {
-	client := &http.Client{Timeout: 2 * time.Second}
-	return func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-
-		status, code := "ok", http.StatusOK
-		dbStatus := "ok"
-		if err := db.PingContext(ctx); err != nil {
-			status, code, dbStatus = "degraded", http.StatusServiceUnavailable, err.Error()
+// llmClients returns the Anthropic clients when ANTHROPIC_API_KEY is set,
+// otherwise deterministic mocks that answer every brief (the reference rule
+// and content), so the whole flow can be demoed without a key.
+func llmClients(cfg config.Config) (segment.LLMClient, composer.MessageLLMClient, error) {
+	if cfg.AnthropicKey != "" {
+		s, err := segment.NewAnthropicClientFromEnv()
+		if err != nil {
+			return nil, nil, err
 		}
-		providerStatus := "ok"
-		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(providerURL, "/")+"/healthz", nil)
-		if resp, err := client.Do(req); err != nil {
-			providerStatus = "unreachable"
-		} else {
-			_ = resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				providerStatus = resp.Status
-			}
+		m, err := composer.NewAnthropicMessageClientFromEnv()
+		if err != nil {
+			return nil, nil, err
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(code)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"status": status,
-			"checks": map[string]string{"database": dbStatus, "provider": providerStatus},
-		})
+		return s, m, nil
 	}
+	slog.Warn("ANTHROPIC_API_KEY is not set: using the mock LLM (every brief gets the reference rule and content)")
+	s := segment.NewMockLLMClient().
+		On(composer.ReferenceBrief, segment.ReferenceRule).
+		Default(segment.ReferenceRule)
+	m := composer.NewMockMessageLLMClient().Default(composer.ReferenceMessageJSON)
+	m.ChunkDelay = cfg.MockStreamDelay
+	return s, m, nil
 }
 
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+func pingDB(ctx context.Context, db *sql.DB) error {
+	if err := db.PingContext(ctx); err != nil {
+		return err
 	}
-	return fallback
+	// Also proves the segment view compiles against the current schema.
+	var n int
+	return db.QueryRowContext(ctx, "SELECT count(*) FROM (SELECT 1 FROM "+repository.SegmentView+" LIMIT 1)").Scan(&n)
 }

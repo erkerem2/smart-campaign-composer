@@ -371,3 +371,16 @@ func TestChunkJSONShape(t *testing.T) {
 		t.Fatalf("issue json = %s", b)
 	}
 }
+
+func TestMockDefaultResponse(t *testing.T) {
+	ctx := context.Background()
+	mock := composer.NewMockMessageLLMClient()
+	if _, err := newComposer(mock).Generate(ctx, otherBrief); !errors.Is(err, composer.ErrLLM) {
+		t.Fatalf("unknown brief without a default must fail: %v", err)
+	}
+	mock.Default(composer.ReferenceMessageJSON)
+	d, err := newComposer(mock).Generate(ctx, otherBrief)
+	if err != nil || d.Message != composer.ReferenceMessage {
+		t.Fatalf("default not used: %+v, %v", d, err)
+	}
+}

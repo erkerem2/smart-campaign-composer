@@ -13,3 +13,5 @@ https://claude.ai/share/c01ef460-0624-46dd-b8f2-4817dd1258d0
 
 - **Session 04 - Mock provider ve rate-limited dispatch**
 https://claude.ai/share/c511e334-6d3b-49a1-9969-44083a16cc5e
+
+- **Session 05 - HTTP API Layer, Database VIEW & E2E Integration**

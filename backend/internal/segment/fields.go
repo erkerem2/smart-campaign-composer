@@ -121,13 +121,13 @@ var (
 	boolOps = []Operator{OpEquals, OpNotEquals}
 )
 
-// DefaultRegistry is the whitelist for the `users` table from the seed.
-//
-// If a field is derived in your real schema (e.g. has_purchased_since_cart
-// computed from orders vs cart events), expose it through a VIEW and point
-// Table at the view — column names here are deliberately restricted to plain
-// identifiers so no SQL expression can ever be configured in by accident.
-var DefaultRegistry = MustRegistry("users", "opt_in_sms", "opt_in_email", DefaultLimits,
+// DefaultRegistry is the whitelist for the v_users_segment VIEW
+// (internal/repository/schema.sql). The view derives the time-relative
+// attributes (cart_last_active_days, has_purchased_since_cart) from the
+// timestamps stored in users at query time, and exposes no PII. Column names
+// here are deliberately restricted to plain identifiers so no SQL expression
+// can ever be configured in by accident; the derivation lives in the view.
+var DefaultRegistry = MustRegistry("v_users_segment", "opt_in_sms", "opt_in_email", DefaultLimits,
 	FieldSpec{
 		Name: "city", Column: "city", Type: TypeString, Operators: setOps,
 		Normalize:   NormalizeCity,
@@ -143,10 +143,10 @@ var DefaultRegistry = MustRegistry("users", "opt_in_sms", "opt_in_email", Defaul
 	},
 	FieldSpec{
 		Name: "cart_last_active_days", Column: "cart_last_active_days", Type: TypeInt, Operators: cmpOps, Min: 0, Max: 3650,
-		Description: "Sepete son ürün eklemesinin üzerinden geçen gün sayısı. Hiç sepet aktivitesi olmayanlarda boştur. \"Son 30 günde sepete ekleyen\" → LESS_THAN_OR_EQUAL 30.",
+		Description: "Sepete son ürün eklemesinin üzerinden geçen gün sayısı (yukarı yuvarlanır: 0-24 saat önce = 1). Hiç sepet aktivitesi olmayanlarda boştur. \"Son 30 günde sepete ekleyen\" → LESS_THAN_OR_EQUAL 30.",
 	},
 	FieldSpec{
 		Name: "has_purchased_since_cart", Column: "has_purchased_since_cart", Type: TypeBool, Operators: boolOps,
-		Description: "Son sepet aktivitesinden sonra alışveriş yaptı mı. \"Sepeti terk eden / alışveriş yapmayan\" → EQUALS false.",
+		Description: "Son sepet aktivitesinden sonra (veya aynı anda) alışveriş yaptı mı. Hiç sepeti olmayanlarda false'tur; bu yüzden sepet şartını cart_last_active_days ile ayrıca ver. \"Sepeti terk eden / alışveriş yapmayan\" → EQUALS false.",
 	},
 )

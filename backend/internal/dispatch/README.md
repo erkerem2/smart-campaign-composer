@@ -30,9 +30,11 @@ d, _ := dispatch.New(
 _ = campaigns.Approve(ctx, id)                            // human approval
 run, err := d.Start(serverCtx, id, dispatch.IDAudience(users, ids))
 stats, _ := d.Stats(ctx, id)                              // live while running, DB afterwards
-mux.HandleFunc("GET /api/campaigns/{id}/dispatch", d.StatsHandler())
-mux.HandleFunc("GET /api/campaigns/{id}/dispatch/stream", d.StreamHandler(500*time.Millisecond))
 ```
+
+The public HTTP endpoints (start/resume, stats snapshot, live SSE stream) are served by
+`internal/api` (ADR 009), which resolves the audience from the campaign's stored rule.
+`StatsHandler` / `StreamHandler` remain for embedding the engine elsewhere.
 
 ## Stats
 
@@ -46,9 +48,10 @@ mux.HandleFunc("GET /api/campaigns/{id}/dispatch/stream", d.StreamHandler(500*ti
 | `pending`   | `total - processed`                                                   |
 | `opted_out` | user × channel pairs excluded for missing permission                  |
 | `skipped`   | already dispatched earlier, or listed twice by the audience           |
+| `speed`     | average msg/s of the run (`processed / elapsed_seconds`); per channel ≤ 100 |
 
 Per channel under `channels.sms` / `channels.email`. Without an active run in the process the numbers come
-from `dispatch_logs` (`opted_out` / `skipped` are not persisted and read 0).
+from `dispatch_logs` (`opted_out` / `skipped` / `speed` are not persisted and read 0).
 
 ## Tests
 

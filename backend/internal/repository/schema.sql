@@ -6,6 +6,8 @@
 --     filters like cart_last_active_at >= ? work on plain indexes.
 --   * Booleans are INTEGER 0/1.
 --   * Enum columns are guarded by CHECK constraints that mirror internal/domain.
+--   * Derived, time-relative segment attributes are never stored: the
+--     v_users_segment VIEW computes them at query time (schema version 3).
 
 CREATE TABLE IF NOT EXISTS users (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,12 +29,59 @@ CREATE INDEX IF NOT EXISTS idx_users_city                ON users (city);
 CREATE INDEX IF NOT EXISTS idx_users_cart_last_active_at ON users (cart_last_active_at);
 CREATE INDEX IF NOT EXISTS idx_users_last_purchase_at    ON users (last_purchase_at);
 
+-- Segment view (schema version 3). The segment engine (internal/segment,
+-- DefaultRegistry) only ever reads this view, never the users table:
+--
+--   * cart_last_active_days    whole days since the last cart activity,
+--                              ROUNDED UP, NULL when the user never used the
+--                              cart. Rounding up makes "<= N" mean exactly
+--                              "cart activity within the last N x 24h"
+--                              (activity 30 days + 1 hour ago is day 31).
+--                              Computed in integer seconds, clamped at 0 for
+--                              timestamps in the future (clock skew).
+--   * has_purchased_since_cart 1 when the last purchase is at or after the
+--                              last cart activity, else 0 (also 0 when the
+--                              user never used the cart, so the column is
+--                              never NULL and NOT_EQUALS has no NULL trap).
+--
+-- Both depend on 'now', so they cannot be stored columns; a VIEW keeps them
+-- correct without a nightly job. It deliberately exposes no PII (name,
+-- email, phone): even a bug in the rule compiler could not select them.
+-- It is dropped and recreated on every Migrate (views hold no data), so a
+-- changed definition always takes effect.
+DROP VIEW IF EXISTS v_users_segment;
+CREATE VIEW v_users_segment AS
+SELECT
+    id,
+    city,
+    age,
+    total_spend,
+    CASE
+        WHEN cart_last_active_at IS NULL THEN NULL
+        ELSE MAX(0, (CAST(strftime('%s', 'now') AS INTEGER)
+                     - CAST(strftime('%s', cart_last_active_at) AS INTEGER)
+                     + 86399) / 86400)
+    END AS cart_last_active_days,
+    CASE
+        WHEN cart_last_active_at IS NOT NULL
+         AND last_purchase_at IS NOT NULL
+         AND last_purchase_at >= cart_last_active_at THEN 1
+        ELSE 0
+    END AS has_purchased_since_cart,
+    opt_in_sms,
+    opt_in_email
+FROM users;
+
 CREATE TABLE IF NOT EXISTS campaigns (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     brief      TEXT NOT NULL CHECK (length(trim(brief)) > 0),
     status     TEXT NOT NULL DEFAULT 'draft'
                CHECK (status IN ('draft', 'approved', 'sending', 'completed', 'failed')),
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    -- Canonical, validated segment rule tree (JSON AST, never SQL) the
+    -- marketer approved. Re-validated by the segment parser when read.
+    -- (Schema version 3; added with ALTER TABLE on older databases.)
+    segment_rule TEXT CHECK (segment_rule IS NULL OR json_valid(segment_rule))
 );
 
 CREATE TABLE IF NOT EXISTS campaign_messages (

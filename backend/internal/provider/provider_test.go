@@ -289,3 +289,14 @@ func TestParseRetryAfter(t *testing.T) {
 		}
 	}
 }
+
+func TestClientPing(t *testing.T) {
+	_, c := newMock(t, reliable())
+	if err := c.Ping(context.Background()); err != nil {
+		t.Fatalf("ping healthy mock: %v", err)
+	}
+	down := NewClient("http://127.0.0.1:1", nil)
+	if err := down.Ping(context.Background()); err == nil {
+		t.Fatal("ping of a closed port must fail")
+	}
+}

@@ -92,6 +92,8 @@ type MockMessageLLMClient struct {
 	ChunkDelay time.Duration
 	// Requests records every request, for assertions.
 	Requests []MessageRequest
+
+	fallback []string
 }
 
 // NewMockMessageLLMClient is pre-loaded with ReferenceBrief → ReferenceMessage.
@@ -111,6 +113,16 @@ func (m *MockMessageLLMClient) On(brief string, rawJSON ...string) *MockMessageL
 	return m
 }
 
+// Default sets the responses used for briefs without canned ones (local
+// development without an API key). Tests that need "unknown brief" errors
+// simply do not set it.
+func (m *MockMessageLLMClient) Default(rawJSON ...string) *MockMessageLLMClient {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.fallback = rawJSON
+	return m
+}
+
 func (m *MockMessageLLMClient) next(req MessageRequest) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -120,6 +132,9 @@ func (m *MockMessageLLMClient) next(req MessageRequest) (string, error) {
 	}
 	key := mockKey(req.Brief)
 	resps, ok := m.responses[key]
+	if (!ok || len(resps) == 0) && len(m.fallback) > 0 {
+		resps, ok = m.fallback, true
+	}
 	if !ok || len(resps) == 0 {
 		return "", fmt.Errorf("mock llm: no canned response for brief %q", snippet(req.Brief))
 	}
