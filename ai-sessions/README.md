@@ -15,3 +15,6 @@ https://claude.ai/share/c01ef460-0624-46dd-b8f2-4817dd1258d0
 https://claude.ai/share/c511e334-6d3b-49a1-9969-44083a16cc5e
 
 - **Session 05 - HTTP API Layer, Database VIEW & E2E Integration**
+https://claude.ai/share/5803d095-cadf-48bb-a7b9-a1aaf40d8d0d
+
+- **Session 06 - Vue 3 Frontend, SSE Streaming & Live Dispatch Dashboard**

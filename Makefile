@@ -1,4 +1,4 @@
-.PHONY: test test-short test-e2e seed reseed run mock-provider
+.PHONY: test test-short test-e2e seed reseed run mock-provider frontend-install frontend-dev frontend-build test-frontend
 
 test:
 	$(MAKE) -C backend test
@@ -20,3 +20,15 @@ run:
 
 mock-provider:
 	$(MAKE) -C backend mock-provider
+
+frontend-install:
+	cd frontend && npm install
+
+frontend-dev:
+	cd frontend && npm run dev
+
+frontend-build:
+	cd frontend && npm run build
+
+test-frontend:
+	cd frontend && npm test

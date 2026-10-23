@@ -1,0 +1,115 @@
+@import "tailwindcss";
+
+/*
+ * Tailwind v4 is configured CSS-first: the design tokens below generate the
+ * utilities (bg-paper, text-ink-2, border-line, bg-sms, text-email, …).
+ * Content sources are detected automatically from the Vue files.
+ *
+ * Channel identity is fixed everywhere: SMS = teal, e-mail = violet.
+ * Status colours (good / warn / bad) are reserved for state and are always
+ * paired with an icon and a label, never colour alone.
+ */
+@theme {
+  --font-sans: "Schibsted Grotesk", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+
+  --color-paper: #f3f5fa;
+  --color-surface: #ffffff;
+  --color-ink: #172036;
+  --color-ink-2: #4a5570;
+  --color-ink-3: #6f7a93;
+  --color-line: #dde2ec;
+  --color-line-strong: #c3cad9;
+
+  --color-accent: #2f3fb8;
+  --color-accent-strong: #24319a;
+  --color-accent-soft: #e6e9fa;
+
+  --color-sms: #0b8574;
+  --color-sms-soft: #e0f3ef;
+  --color-email: #7445c9;
+  --color-email-soft: #eee7fa;
+
+  --color-good: #1e7f46;
+  --color-good-soft: #e3f3e9;
+  --color-warn: #a86a0e;
+  --color-warn-soft: #fbf0dc;
+  --color-bad: #be2f2a;
+  --color-bad-soft: #fbe6e5;
+
+  --radius-panel: 14px;
+  --radius-control: 9px;
+
+  --animate-caret: caret 1s steps(1) infinite;
+  @keyframes caret {
+    50% { opacity: 0; }
+  }
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    color: var(--color-ink);
+    background: var(--color-paper);
+    -webkit-font-smoothing: antialiased;
+  }
+  body { min-height: 100dvh; }
+  ::selection { background: var(--color-accent-soft); }
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  button:disabled { cursor: not-allowed; }
+}
+
+@layer components {
+  .panel {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-panel);
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: var(--radius-control);
+    padding: 0.625rem 1rem;
+    font-weight: 600;
+    font-size: 0.9375rem;
+    line-height: 1.25rem;
+    transition: background-color 120ms, border-color 120ms, color 120ms;
+  }
+  .btn-primary { background: var(--color-accent); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: var(--color-accent-strong); }
+  .btn-primary:disabled { background: var(--color-line-strong); }
+  .btn-quiet {
+    background: var(--color-surface);
+    color: var(--color-ink);
+    border: 1px solid var(--color-line-strong);
+  }
+  .btn-quiet:hover:not(:disabled) { border-color: var(--color-ink-3); }
+  .btn-quiet:disabled { color: var(--color-ink-3); }
+  .field {
+    width: 100%;
+    background: var(--color-surface);
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-control);
+    padding: 0.625rem 0.75rem;
+    font-size: 0.9375rem;
+    line-height: 1.5;
+    color: var(--color-ink);
+  }
+  .field:focus { outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 3px var(--color-accent-soft); }
+  .field[aria-invalid="true"] { border-color: var(--color-bad); }
+  .field[aria-invalid="true"]:focus { box-shadow: 0 0 0 3px var(--color-bad-soft); }
+  .tnum { font-variant-numeric: tabular-nums; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
