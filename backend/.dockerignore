@@ -1,0 +1,15 @@
+# Keep the build context small and free of local state.
+bin/
+tmp/
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.env
+.env.*
+*.test
+*.out
+coverage*
+Dockerfile
+.dockerignore
