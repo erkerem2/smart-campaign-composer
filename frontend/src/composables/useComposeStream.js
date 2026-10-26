@@ -46,6 +46,22 @@ export function useComposeStream({ open = api.composeStream } = {}) {
     rejected.value = null
   }
 
+  // fail ends the stream in a clean error state: text that was only streamed
+  // (never validated) is cleared, so it cannot be mistaken for a draft.
+  function fail(message) {
+    clearFields()
+    activeField.value = null
+    draft.value = null
+    rejected.value = null
+    error.value = message
+    status.value = 'error'
+  }
+
+  /** validDraft accepts only a draft whose message has every field as text. */
+  function validDraft(d) {
+    return !!d && typeof d === 'object' && !!d.message && FIELDS.every((f) => typeof d.message[f] === 'string')
+  }
+
   function handle(ev) {
     let data
     try {
@@ -69,6 +85,10 @@ export function useComposeStream({ open = api.composeStream } = {}) {
         break
       case 'done': {
         const d = data.draft
+        if (!validDraft(d)) {
+          fail('Sunucudan geçersiz bir yanıt geldi. Tekrar deneyin.')
+          break
+        }
         draft.value = d
         for (const f of FIELDS) fields[f] = d?.message?.[f] ?? ''
         activeField.value = null
@@ -98,13 +118,13 @@ export function useComposeStream({ open = api.composeStream } = {}) {
         if (status.value !== 'streaming') break
       }
       if (status.value === 'streaming' && !signal.aborted) {
-        status.value = 'error'
-        error.value = 'Akış tamamlanmadan kesildi. Tekrar deneyin.'
+        fail('Akış tamamlanmadan kesildi. Tekrar deneyin.')
       }
     } catch (err) {
       if (signal.aborted || err?.name === 'AbortError') return
-      status.value = 'error'
-      error.value = err instanceof ApiError ? err.userMessage : String(err?.message || err)
+      // A dropped connection surfaces as a TypeError from reader.read();
+      // its text ("network error", "terminated") means nothing to a marketer.
+      fail(err instanceof ApiError ? err.userMessage : 'Sunucuyla bağlantı koptu. Tekrar deneyin.')
     } finally {
       if (controller?.signal === signal) controller = null
     }

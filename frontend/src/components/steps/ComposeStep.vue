@@ -54,6 +54,9 @@ const heading = computed(() => {
     </Notice>
     <Notice v-else-if="c.status.value === 'error'" tone="bad" title="Akış tamamlanmadı" class="mt-6">
       {{ c.error.value }}
+      <button type="button" class="ml-1 font-semibold text-accent hover:underline" data-test="compose-retry" @click="f.startCompose()">
+        Tekrar dene
+      </button>
     </Notice>
 
     <div class="mt-8 grid items-start gap-6 lg:grid-cols-[22rem_1fr]">

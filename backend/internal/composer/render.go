@@ -2,6 +2,7 @@ package composer
 
 import (
 	"html"
+	"net/url"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -21,7 +22,10 @@ const maxValueRunes = 64
 //   - only whitelisted variables are resolved, anything else is an error;
 //   - values are cleaned (control/bidi characters removed, whitespace
 //     collapsed, length capped) and escaped for the target format
-//     (HTML-escaped for HTML bodies, backslash-escaped for Markdown);
+//     (HTML-escaped for HTML bodies, backslash-escaped for Markdown) and,
+//     inside a link target (href, Markdown link destination), URL-encoded
+//     first, so a name cannot add query parameters, start a fragment or end
+//     the link;
 //   - the rendered SMS and subject are re-checked against the hard limits,
 //     because a real name can be longer than the validator's estimate.
 type Renderer struct {
@@ -88,9 +92,19 @@ func (r *Renderer) RenderEmail(subjectTmpl, bodyTmpl string, u domain.User) (sub
 		return "", "", "", newIssue(FieldEmailSubject, ErrRenderedTooLong, "%d characters for user %d, limit is %d", n, u.ID, r.Limits.EmailSubjectMaxRunes)
 	}
 	format = DetectBodyFormat(bodyTmpl)
-	esc := escapeMarkdown
-	if format == BodyHTML {
-		esc = html.EscapeString
+	links := urlSpans(bodyTmpl, format)
+	esc := func(p placeholder, v string) string {
+		inLink := inSpans(p.Start, links)
+		if format == BodyHTML {
+			if inLink {
+				v = urlComponent(v)
+			}
+			return html.EscapeString(v)
+		}
+		if inLink {
+			return urlComponent(v) // only unreserved characters and %XX
+		}
+		return escapeMarkdown(v)
 	}
 	body, err = r.renderField(FieldEmailBody, bodyTmpl, u, esc)
 	if err != nil {
@@ -99,7 +113,7 @@ func (r *Renderer) RenderEmail(subjectTmpl, bodyTmpl string, u domain.User) (sub
 	return subject, body, format, nil
 }
 
-func (r *Renderer) renderField(f Field, tmpl string, u domain.User, escape func(string) string) (string, error) {
+func (r *Renderer) renderField(f Field, tmpl string, u domain.User, escape func(placeholder, string) string) (string, error) {
 	found, malformed := scanPlaceholders(tmpl)
 	if len(malformed) > 0 {
 		return "", newIssue(f, ErrMalformedPlaceholder, "%s", malformed[0])
@@ -117,19 +131,19 @@ func (r *Renderer) renderField(f Field, tmpl string, u domain.User, escape func(
 			val = v.Fallback
 		}
 		b.WriteString(tmpl[last:p.Start])
-		b.WriteString(escape(val))
+		b.WriteString(escape(p, val))
 		last = p.End
 	}
 	b.WriteString(tmpl[last:])
 	return b.String(), nil
 }
 
-// cleanValue removes control and bidi characters, collapses whitespace
+// cleanValue removes control, bidi and invisible characters, collapses whitespace
 // (so a value can never add a line break to a subject) and caps the length.
 func cleanValue(s string) string {
 	s = strings.Map(func(r rune) rune {
 		switch {
-		case r == utf8.RuneError, isBidiControl(r):
+		case r == utf8.RuneError, isBidiControl(r), isInvisible(r):
 			return -1
 		case unicode.IsSpace(r):
 			return ' '
@@ -145,7 +159,14 @@ func cleanValue(s string) string {
 	return s
 }
 
-func plainText(s string) string { return s }
+func plainText(_ placeholder, s string) string { return s }
+
+// urlComponent percent-encodes a value for use anywhere in a URL after the
+// host: & = ? # / + space and every non-ASCII byte are encoded, so the value
+// stays one piece of data in a path segment, query value or fragment.
+func urlComponent(s string) string {
+	return strings.ReplaceAll(url.QueryEscape(s), "+", "%20")
+}
 
 // escapeMarkdown backslash-escapes ASCII punctuation that has meaning in
 // CommonMark, so a value like "*Ali*" or "[x](javascript:..)" stays text.

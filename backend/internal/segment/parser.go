@@ -74,15 +74,58 @@ func classifyDecodeErr(path string, err error) error {
 	return verr(path, ErrMalformedJSON, "%v", err)
 }
 
+// wireKeys are the only object keys a rule node may carry, spelled exactly
+// like this. encoding/json alone would also accept "TYPE" or "Field" (it
+// matches struct fields case-insensitively) and silently keep the last of
+// duplicate keys, so {"field":"password","field":"age"} would be validated
+// as something other than what the model wrote.
+var wireKeys = map[string]bool{"type": true, "logic": true, "rules": true, "field": true, "operator": true, "value": true}
+
+// checkKeys verifies the top-level keys of the JSON object raw: exact
+// spelling, each at most once. raw must already have passed decodeStrict.
+// It returns the keys present, whatever their value (null included).
+func checkKeys(raw []byte, path string) (map[string]bool, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil, verr(path, ErrMalformedJSON, "expected a JSON object")
+	}
+	seen := make(map[string]bool, len(wireKeys))
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, verr(path, ErrMalformedJSON, "%v", err)
+		}
+		key, _ := tok.(string)
+		if !wireKeys[key] {
+			return nil, verr(path, ErrUnknownKey, "unknown field %q", truncate(key))
+		}
+		if seen[key] {
+			return nil, verr(path, ErrMalformedJSON, "duplicate key %q", key)
+		}
+		seen[key] = true
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return nil, verr(path, ErrMalformedJSON, "%v", err)
+		}
+	}
+	return seen, nil
+}
+
 func (st *parseState) node(raw []byte, path string, depth int) (*Node, error) {
 	lim := st.p.reg.Limits
 	var w wireNode
 	if err := decodeStrict(raw, &w); err != nil {
 		return nil, classifyDecodeErr(path, err)
 	}
+	present, err := checkKeys(raw, path)
+	if err != nil {
+		return nil, err
+	}
 	switch w.Type {
 	case NodeGroup:
-		if w.Field != "" || w.Operator != "" || w.Value != nil {
+		// Presence, not value: {"field": ""} or {"value": null} on a group is
+		// as malformed as a non-empty one.
+		if present["field"] || present["operator"] || present["value"] {
 			return nil, verr(path, ErrUnknownKey, "group node must not carry field/operator/value")
 		}
 		if depth > lim.MaxDepth {
@@ -111,7 +154,7 @@ func (st *parseState) node(raw []byte, path string, depth int) (*Node, error) {
 		return n, nil
 
 	case NodeCondition:
-		if w.Logic != "" || w.Rules != nil {
+		if present["logic"] || present["rules"] {
 			return nil, verr(path, ErrUnknownKey, "condition node must not carry logic/rules")
 		}
 		st.conditions++

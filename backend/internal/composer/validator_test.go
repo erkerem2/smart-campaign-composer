@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"smart-campaign-composer/backend/internal/composer"
 	"smart-campaign-composer/backend/internal/domain"
@@ -64,17 +65,18 @@ func TestReferenceMessageIsValid(t *testing.T) {
 	}
 }
 
-// {{first_name}} is 14 runes as written and estimated at 10 when rendered.
+// {{first_name}} is 14 runes as written and budgeted at 18 when rendered: the
+// wider of the average name (10) and the fallback "Değerli müşterimiz" (18).
 func TestFirstNameEstimate(t *testing.T) {
 	rep, err := validate(withSMS("Merhaba {{first_name}}!"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rep.SMS.Runes != 23 || rep.SMS.EstimatedRunes != 23-14+composer.AverageFirstNameRunes {
+	if rep.SMS.Runes != 23 || rep.SMS.EstimatedRunes != 23-14+18 {
 		t.Fatalf("runes=%d estimated=%d", rep.SMS.Runes, rep.SMS.EstimatedRunes)
 	}
 	rep, _ = validate(withSMS("{{first_name}} {{first_name}}"))
-	if rep.SMS.EstimatedRunes != 21 || len(rep.SMS.Variables) != 1 {
+	if rep.SMS.EstimatedRunes != 37 || len(rep.SMS.Variables) != 1 {
 		t.Fatalf("two occurrences: estimated=%d vars=%v", rep.SMS.EstimatedRunes, rep.SMS.Variables)
 	}
 }
@@ -92,10 +94,12 @@ func TestSMSLimit(t *testing.T) {
 		{"160 turkish", strings.Repeat("ş", 160), nil},
 		{"161 turkish", strings.Repeat("ğ", 161), composer.ErrTooLong},
 		{"160 emoji", strings.Repeat("🎉", 160), nil},
-		// Raw template 160, estimated 156: fits both.
-		{"template 160", name + strings.Repeat("a", 146), nil},
-		// Raw template 161 is rejected even though the estimate (157) fits:
-		// the template as written must also respect the limit.
+		// Raw template 156, estimated 160: fits both.
+		{"template estimate 160", name + strings.Repeat("a", 142), nil},
+		// Raw 157 fits, but a user without a name would get 161 characters.
+		{"template estimate 161", name + strings.Repeat("a", 143), composer.ErrEstimatedTooLong},
+		// Raw template 161 is rejected as too long as written (the raw
+		// length is checked before the estimate).
 		{"template 161", name + strings.Repeat("a", 147), composer.ErrTooLong},
 		{"newline allowed", "Satır 1\nSatır 2", nil},
 	}
@@ -134,9 +138,11 @@ func TestEmailSubjectLimit(t *testing.T) {
 	_, err := validate(withSubject(strings.Repeat("a", 81)))
 	wantIssue(t, err, composer.FieldEmailSubject, composer.ErrTooLong)
 
-	if _, err := validate(withSubject("{{first_name}}" + strings.Repeat("a", 66))); err != nil {
-		t.Fatalf("raw 80 with variable must pass: %v", err)
+	if _, err := validate(withSubject("{{first_name}}" + strings.Repeat("a", 62))); err != nil {
+		t.Fatalf("estimated 80 with variable must pass: %v", err)
 	}
+	_, err = validate(withSubject("{{first_name}}" + strings.Repeat("a", 63)))
+	wantIssue(t, err, composer.FieldEmailSubject, composer.ErrEstimatedTooLong)
 	_, err = validate(withSubject("{{first_name}}" + strings.Repeat("a", 67)))
 	wantIssue(t, err, composer.FieldEmailSubject, composer.ErrTooLong)
 }
@@ -409,5 +415,72 @@ func TestCampaignMessagesMapping(t *testing.T) {
 	}
 	if back := composer.MessageFromCampaign(rows); back != validMsg() {
 		t.Errorf("round trip = %+v", back)
+	}
+}
+
+// The validator's promise: a template it accepts renders within the channel
+// limit for every user it can be rendered for. A user without a first name
+// gets the fallback "Değerli müşterimiz" (18 runes), which is wider than the
+// 10-rune estimate, so the estimate must cover the fallback.
+func TestValidatorEstimateCoversFallback(t *testing.T) {
+	noName := domain.User{ID: 1, FirstName: "", LastName: "Yılmaz"}
+	fallback := utf8.RuneCountInString("Değerli müşterimiz")
+	for pad := 120; pad <= 160; pad++ {
+		tmpl := "{{first_name}}" + strings.Repeat("a", pad)
+		if _, err := validate(withSMS(tmpl)); err == nil {
+			if _, err := composer.DefaultRenderer.RenderSMS(tmpl, noName); err != nil {
+				t.Fatalf("SMS with %d padding passed validation but cannot be rendered for a user without a name: %v", pad, err)
+			}
+		}
+		if pad > 80 {
+			continue
+		}
+		subj := "{{first_name}}" + strings.Repeat("b", pad-14)
+		if _, err := validate(withSubject(subj)); err == nil {
+			if _, _, _, err := composer.DefaultRenderer.RenderEmail(subj, "Gövde", noName); err != nil {
+				t.Fatalf("subject of %d runes passed validation but cannot be rendered without a name: %v", utf8.RuneCountInString(subj), err)
+			}
+		}
+	}
+	rep, err := validate(withSMS("Merhaba {{first_name}}!"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := 23 - 14 + fallback; rep.SMS.EstimatedRunes != want {
+		t.Fatalf("estimated runes = %d, want %d (fallback width)", rep.SMS.EstimatedRunes, want)
+	}
+}
+
+// U+2028 / U+2029 end a line in many renderers (and in JavaScript source)
+// without being a control character, and zero-width / format characters
+// (U+200B, U+FEFF, U+00AD, U+2060, Unicode tag characters) are invisible:
+// they hide text from the reviewer, smuggle instructions to other models and
+// silently eat into the 160-character budget. Emoji joiners stay allowed.
+func TestForbiddenInvisibleAndSeparatorCharacters(t *testing.T) {
+	cases := []struct {
+		name  string
+		msg   composer.Message
+		field composer.Field
+	}{
+		{"line separator in subject", withSubject("Konu\u2028Bcc: kurban@example.com"), composer.FieldEmailSubject},
+		{"paragraph separator in subject", withSubject("Konu\u2029gizli"), composer.FieldEmailSubject},
+		{"line separator in sms", withSMS("Merhaba\u2028dünya"), composer.FieldSMS},
+		{"paragraph separator in body", withBody("Merhaba\u2029dünya"), composer.FieldEmailBody},
+		{"zero width space in sms", withSMS("İndi\u200brim %30"), composer.FieldSMS},
+		{"BOM in subject", withSubject("\ufeffKonu"), composer.FieldEmailSubject},
+		{"soft hyphen in sms", withSMS("in\u00addirim"), composer.FieldSMS},
+		{"word joiner in body", withBody("Merhaba\u2060dünya"), composer.FieldEmailBody},
+		{"invisible tag characters", withBody("Merhaba \U000E0049\U000E0047\U000E004E\U000E004F\U000E0052\U000E0045"), composer.FieldEmailBody},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := validate(tc.msg)
+			wantIssue(t, err, tc.field, composer.ErrForbiddenCharacter)
+		})
+	}
+	for _, ok := range []string{"Aile 👨\u200d👩\u200d👧 indirimi", "Sevgiler ❤️", "Bayrak 🇹🇷"} {
+		if _, err := validate(withSMS(ok)); err != nil {
+			t.Errorf("%q must stay valid (emoji joiners / selectors): %v", ok, err)
+		}
 	}
 }

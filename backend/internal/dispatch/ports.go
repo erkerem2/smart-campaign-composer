@@ -99,12 +99,27 @@ type Store interface {
 }
 
 // CampaignStore reads campaigns and moves them through their lifecycle.
+//
+// A run is owned through a lease on the campaign row, so that of several
+// dispatchers (goroutines, processes, hosts) sharing a database exactly one
+// sends a campaign at a time:
+//
+//	AcquireDispatch  from approved: approved → sending, owner set (Start)
+//	                 from sending:  owner set if there is none or its lease
+//	                                expired (Resume after a crash)
+//	RenewDispatch    the owner extends its lease while the run is alive
+//	ReleaseDispatch  the owner ends the run: sending → to, no owner
+//
+// All three are compare-and-set operations. Errors: domain.ErrNotFound,
+// domain.ErrStatusConflict (status is not from), domain.ErrLeaseHeld
+// (another owner's lease is live), domain.ErrLeaseLost (the caller is no
+// longer the owner).
 type CampaignStore interface {
 	GetByID(ctx context.Context, id int64) (domain.Campaign, error)
 	Messages(ctx context.Context, campaignID int64) ([]domain.CampaignMessage, error)
-	// TransitionStatus is a compare-and-set; it fails if the campaign is not
-	// in status from (so only one caller can start a campaign).
-	TransitionStatus(ctx context.Context, id int64, from, to domain.CampaignStatus) error
+	AcquireDispatch(ctx context.Context, id int64, from domain.CampaignStatus, owner string, now, until time.Time) error
+	RenewDispatch(ctx context.Context, id int64, owner string, until time.Time) error
+	ReleaseDispatch(ctx context.Context, id int64, owner string, to domain.CampaignStatus) error
 }
 
 // AudienceSource streams the recipients of a campaign. It is resolved from

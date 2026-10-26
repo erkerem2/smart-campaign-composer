@@ -8,6 +8,7 @@ import (
 
 	"smart-campaign-composer/backend/internal/composer"
 	"smart-campaign-composer/backend/internal/segment"
+	"smart-campaign-composer/backend/internal/textguard"
 )
 
 type previewRequest struct {
@@ -41,7 +42,7 @@ func (s *Server) handlePreviewSegment(w http.ResponseWriter, r *http.Request) {
 	case len(req.Rule) > 0 && string(req.Rule) != "null":
 		p, err = s.cfg.Segments.PreviewJSON(r.Context(), req.Rule)
 		if p != nil {
-			p.Brief = strings.TrimSpace(req.Brief)
+			p.Brief = textguard.CleanBrief(req.Brief)
 		}
 	case strings.TrimSpace(req.Brief) != "":
 		p, err = s.cfg.Segments.Preview(r.Context(), req.Brief)

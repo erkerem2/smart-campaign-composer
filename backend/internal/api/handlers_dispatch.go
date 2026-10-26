@@ -40,6 +40,12 @@ func (s *Server) handleDispatch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, e)
 		return
 	}
+	// This request sends real messages: it must not be forgeable from
+	// another site (see requireJSONBody; the origin check is in cors).
+	if e := requireJSONBody(w, r); e != nil {
+		writeError(w, e)
+		return
+	}
 	c, err := s.cfg.Campaigns.GetByID(r.Context(), id)
 	if err != nil {
 		writeError(w, s.lookupError(r, err))

@@ -14,6 +14,15 @@ import (
 var (
 	ErrNotFound       = errors.New("not found")
 	ErrStatusConflict = errors.New("campaign status changed concurrently")
+	// ErrDispatchNotPending: a delivery's final state was already written
+	// (by this run or another one); final states are never overwritten.
+	ErrDispatchNotPending = errors.New("dispatch log is not pending")
+	// ErrLeaseHeld: another dispatcher owns the campaign's run and its
+	// lease has not expired.
+	ErrLeaseHeld = errors.New("campaign is being dispatched by another worker")
+	// ErrLeaseLost: the caller no longer owns the campaign's run (its lease
+	// expired and another dispatcher took it over, or it was released).
+	ErrLeaseLost = errors.New("dispatch lease lost")
 )
 
 // Channel limits mandated by the case (see CASE_SPEC.md).

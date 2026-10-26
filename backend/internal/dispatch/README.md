@@ -2,7 +2,8 @@
 
 ```
 Start(ctx, campaignID, audience)
-  ├─ campaign must be 'approved'; CAS approved → sending (only one caller wins)
+  ├─ campaign must be 'approved'; AcquireDispatch: CAS approved → sending + lease owner (only one caller wins)
+  ├─ heartbeat renews the lease every LeaseTTL/3; lease lost ⇒ the run stops ('interrupted')
   ├─ plan  (before anything is sent; total is known up front)
   │    audience ─► gate 1: User.CanReceive(ch)            → opted_out
   │             ─► ClaimBatch: INSERT 'pending' ... WHERE opt_in_<ch> = 1
@@ -15,8 +16,10 @@ Start(ctx, campaignID, audience)
                               ├─ 2xx            → MarkSent  (pending → sent)
                               ├─ 429/5xx/net    → backoff (exp + equal jitter, ≥ Retry-After), max 3 retries
                               └─ other 4xx / exhausted → MarkFailed (pending → failed)
-  end: completed (or failed if nothing was sent); ctx cancelled ⇒ 'interrupted', campaign stays 'sending'
-Resume(ctx, campaignID, audience)  re-sends pending rows with the SAME key; sent/failed are skipped
+  end: ReleaseDispatch → completed (or failed if nothing was sent); ctx cancelled or an outcome that could not be
+       recorded ⇒ 'interrupted', campaign stays 'sending', lease released
+Resume(ctx, campaignID, audience)  takes the lease if it is free or expired (else ErrAlreadyRunning), then
+                                   re-sends pending rows with the SAME key; sent/failed are skipped
 ```
 
 ## Usage

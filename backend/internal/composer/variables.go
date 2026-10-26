@@ -30,6 +30,16 @@ type Variable struct {
 	Value func(domain.User) string
 }
 
+// Width is the number of runes the validator budgets for the variable: its
+// EstimatedRunes, or the rune length of its Fallback when that is wider. A
+// user without a value gets the fallback, so an estimate narrower than the
+// fallback would let the validator accept a template that the renderer then
+// has to refuse for those users ("Değerli müşterimiz" is 18 runes, the
+// average first name 10).
+func (x Variable) Width() int {
+	return max(x.EstimatedRunes, utf8.RuneCountInString(x.Fallback))
+}
+
 // Variables is an immutable whitelist of personalization variables.
 type Variables struct {
 	byName map[string]Variable

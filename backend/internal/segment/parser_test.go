@@ -167,3 +167,44 @@ func TestErrorMessagesTruncateAttackerInput(t *testing.T) {
 		t.Fatalf("error should be short, got %d bytes", len(err.Error()))
 	}
 }
+
+// encoding/json matches struct keys case-insensitively and lets the last of
+// several duplicate keys win, and DisallowUnknownFields catches neither. A
+// rule tree is untrusted input: the keys must be exactly the documented ones,
+// each at most once, so what was validated is what the model meant.
+func TestParseRejectsKeyCaseVariantsAndDuplicates(t *testing.T) {
+	c := `{"type":"condition","field":"age","operator":"EQUALS","value":30}`
+	tests := []struct {
+		name string
+		raw  string
+		want error
+	}{
+		{"upper-case TYPE", `{"TYPE":"group","logic":"AND","rules":[` + c + `]}`, ErrUnknownKey},
+		{"title-case Logic", `{"type":"group","Logic":"AND","rules":[` + c + `]}`, ErrUnknownKey},
+		{"upper-case RULES", `{"type":"group","logic":"AND","RULES":[` + c + `]}`, ErrUnknownKey},
+		{"title-case Field", `{"type":"group","logic":"AND","rules":[{"type":"condition","Field":"age","operator":"EQUALS","value":30}]}`, ErrUnknownKey},
+		{"mixed-case Value", `{"type":"group","logic":"AND","rules":[{"type":"condition","field":"age","operator":"EQUALS","vAlUe":30}]}`, ErrUnknownKey},
+		{"duplicate field", `{"type":"group","logic":"AND","rules":[{"type":"condition","field":"password","field":"age","operator":"EQUALS","value":30}]}`, ErrMalformedJSON},
+		{"duplicate value", `{"type":"group","logic":"AND","rules":[{"type":"condition","field":"city","operator":"EQUALS","value":"x' OR 1=1","value":"İstanbul"}]}`, ErrMalformedJSON},
+		{"duplicate type at root", `{"type":"condition","type":"group","logic":"AND","rules":[` + c + `]}`, ErrMalformedJSON},
+		{"duplicate rules", `{"type":"group","logic":"AND","rules":[],"rules":[` + c + `]}`, ErrMalformedJSON},
+		{"case-variant duplicate", `{"type":"group","logic":"AND","rules":[{"type":"condition","field":"password","FIELD":"age","operator":"EQUALS","value":30}]}`, ErrUnknownKey},
+	}
+	p := NewParser(DefaultRegistry)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			n, err := p.Parse([]byte(tc.raw))
+			if err == nil {
+				out, _ := json.Marshal(n)
+				t.Fatalf("expected %v, parse succeeded: %s", tc.want, out)
+			}
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("expected %v, got %v", tc.want, err)
+			}
+			var ve *ValidationError
+			if !errors.As(err, &ve) || ve.Path == "" {
+				t.Fatalf("error should be a *ValidationError with a path: %v", err)
+			}
+		})
+	}
+}

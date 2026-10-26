@@ -22,3 +22,6 @@ https://claude.ai/share/59ef6041-4613-4f3b-8793-0801ffa21c56
 
 - **Session 07 - Docker Compose Orchestration, Auto-Seeding & Production README**
 https://claude.ai/share/6fcf5fed-5eb8-42d7-abd1-ef24f33210b4
+
+- **Session 08 - QA Hardening, Red-Green TDD & Edge-Case Audit**
+https://claude.ai/share/fd5b320e-d1cf-4846-89cf-de62279183c8

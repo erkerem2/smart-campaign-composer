@@ -99,4 +99,81 @@ describe('useComposeStream', () => {
     scope.stop()
     expect(signal.aborted).toBe(true)
   })
+
+  // ── D1: a stream that breaks ────────────────────────────────────────────
+  // Whatever goes wrong mid-stream, the composable ends in a clean error
+  // state: no half-typed (never validated) text left in the fields, no
+  // "typing" caret, a Turkish message, and start() works again.
+
+  /** brokenStream yields the given frames, then fails like a dropped connection. */
+  function brokenStream(frames) {
+    const enc = new TextEncoder()
+    let i = 0
+    const body = new ReadableStream({
+      pull(controller) {
+        if (i < frames.length) controller.enqueue(enc.encode(frames[i++]))
+        else controller.error(new TypeError('network error'))
+      },
+    })
+    return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+  }
+
+  const delta = frame('delta', { type: 'delta', attempt: 1, field: 'sms_content', delta: 'yarım kalan met' })
+
+  function expectCleanError(c, pattern) {
+    expect(c.status.value).toBe('error')
+    expect(c.error.value).toMatch(pattern)
+    expect(c.activeField.value).toBeNull()
+    expect(c.draft.value).toBeNull()
+    expect(c.rejected.value).toBeNull()
+    for (const f of ['sms_content', 'email_subject', 'email_body']) expect(c.fields[f]).toBe('')
+  }
+
+  it('ends cleanly when the connection drops mid-stream (reader.read() rejects)', async () => {
+    const { c } = run(async () => brokenStream([delta]))
+    await c.start('brief')
+    expectCleanError(c, /bağlantı/i)
+    expect(c.error.value).not.toMatch(/network error|TypeError/)
+  })
+
+  it('ends cleanly when the stream stops without a final event', async () => {
+    const { c } = run(async () => sseResponse([delta]))
+    await c.start('brief')
+    expectCleanError(c, /kesildi/)
+  })
+
+  it('treats a malformed done frame as a broken stream', async () => {
+    const { c } = run(async () => sseResponse([delta, 'event: done\ndata: {"type":"done","draft":{"message"\n\n']))
+    await c.start('brief')
+    expectCleanError(c, /kesildi|geçersiz/)
+  })
+
+  it.each([
+    ['without a draft', { type: 'done', attempt: 1 }],
+    ['with a null draft', { type: 'done', attempt: 1, draft: null }],
+    ['without the message', { type: 'done', attempt: 1, draft: { report: {}, attempts: 1 } }],
+    ['with a missing field', { type: 'done', attempt: 1, draft: { message: { sms_content: 'x', email_subject: 'y' } } }],
+    ['with a non-string field', { type: 'done', attempt: 1, draft: { message: { ...message, email_body: 42 } } }],
+  ])('rejects a done event %s instead of showing empty content as validated', async (_, done) => {
+    const { c } = run(async () => sseResponse([delta, frame('done', done)]))
+    await c.start('brief')
+    expectCleanError(c, /geçersiz/)
+  })
+
+  it('"Tekrar dene" starts over from a clean state and can succeed', async () => {
+    let calls = 0
+    const { c } = run(async () =>
+      ++calls === 1
+        ? brokenStream([delta])
+        : sseResponse([frame('done', { type: 'done', attempt: 1, draft: { message, report: {}, attempts: 1 } })]),
+    )
+    await c.start('brief')
+    expect(c.status.value).toBe('error')
+    const second = c.start('brief')
+    expect(c.status.value).toBe('streaming')
+    expect(c.error.value).toBe('')
+    await second
+    expect(c.status.value).toBe('done')
+    expect(c.fields.sms_content).toBe(message.sms_content)
+  })
 })

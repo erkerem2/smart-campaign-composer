@@ -205,10 +205,75 @@ func checkURL(raw string) string {
 	lower := strings.ToLower(cleaned)
 	for _, ok := range []string{"https://", "http://", "mailto:"} {
 		if strings.HasPrefix(lower, ok) {
-			return ""
+			return checkURLVariables(cleaned, ok)
 		}
 	}
 	return fmt.Sprintf("link %q must start with https://, http:// or mailto:", snippet(raw))
+}
+
+// checkURLVariables keeps personalization out of the part of a link that
+// decides where it goes. A variable in the host ("https://{{first_name}}.x")
+// or in a mailto address would let a recipient's own data choose the
+// destination; in the path, query or fragment it is URL-encoded on render.
+func checkURLVariables(u, scheme string) string {
+	if !strings.Contains(u, "{{") {
+		return ""
+	}
+	if scheme == "mailto:" {
+		return "personalization variables are not allowed in mailto: links"
+	}
+	rest := u[len(scheme):]
+	end := strings.IndexAny(rest, "/?#")
+	if end < 0 {
+		end = len(rest)
+	}
+	if strings.Contains(rest[:end], "{{") {
+		return fmt.Sprintf("link %q: a personalization variable cannot be part of the host", snippet(u))
+	}
+	return ""
+}
+
+// hrefValueRe finds href attribute values inside a start tag. Templates are
+// validated by checkHTML first, so attribute values never contain < or >.
+var (
+	startTagRe  = regexp.MustCompile(`<[a-zA-Z][^<>]*>`)
+	hrefValueRe = regexp.MustCompile(`(?i)\bhref\s*=\s*(?:"([^"]*)"|'([^']*)')`)
+)
+
+// urlSpans returns the byte ranges of a body template that are link targets:
+// href attribute values (HTML) or link destinations (Markdown). The renderer
+// URL-encodes variables that fall inside them.
+func urlSpans(body string, format BodyFormat) [][2]int {
+	var spans [][2]int
+	if format == BodyHTML {
+		for _, tag := range startTagRe.FindAllStringIndex(body, -1) {
+			for _, m := range hrefValueRe.FindAllStringSubmatchIndex(body[tag[0]:tag[1]], -1) {
+				for g := 2; g+1 < len(m); g += 2 {
+					if m[g] >= 0 {
+						spans = append(spans, [2]int{tag[0] + m[g], tag[0] + m[g+1]})
+					}
+				}
+			}
+		}
+		return spans
+	}
+	for _, re := range []*regexp.Regexp{mdInlineLink, mdRefLink} {
+		for _, m := range re.FindAllStringSubmatchIndex(body, -1) {
+			if m[2] >= 0 {
+				spans = append(spans, [2]int{m[2], m[3]})
+			}
+		}
+	}
+	return spans
+}
+
+func inSpans(pos int, spans [][2]int) bool {
+	for _, s := range spans {
+		if pos >= s[0] && pos < s[1] {
+			return true
+		}
+	}
+	return false
 }
 
 // Markdown link targets: inline [text](url "title") and reference

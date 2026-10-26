@@ -143,4 +143,177 @@ describe('useCampaignFlow', () => {
     expect(flow.step.value).toBe(1)
     expect(flow.previewError.value.code).toBe('llm_unavailable')
   })
+
+  // D6: the brief limit is 2000 characters as the server counts them (Unicode
+  // code points, like Go's utf8.RuneCountInString), not UTF-16 units: an
+  // emoji is one character but two UTF-16 units. The counter on the brief
+  // step already counts code points, so the request must not silently be
+  // dropped while the counter says the brief fits.
+  it('applies the 2000-character brief limit in code points, like the server', async () => {
+    const client = fakeClient()
+    const flow = setup(client)
+
+    flow.brief.value = '🎉'.repeat(1500) // 1500 characters, 3000 UTF-16 units
+    await flow.runPreview()
+    expect(client.previewSegment).toHaveBeenCalledTimes(1)
+    expect(flow.previewError.value).toBeNull()
+
+    flow.brief.value = 'ş'.repeat(1000) + '🎉'.repeat(1000) // exactly 2000
+    await flow.runPreview()
+    expect(client.previewSegment).toHaveBeenCalledTimes(2)
+
+    flow.brief.value = '🎉'.repeat(2001)
+    await flow.runPreview()
+    expect(client.previewSegment).toHaveBeenCalledTimes(2) // not sent
+    expect(flow.previewError.value?.code).toBe('invalid_brief') // and not silent
+  })
+
+  // C3 parity: the brief is cleaned like the server does it, so a brief made
+  // only of invisible characters is empty (no request), and invisible
+  // padding does not count toward the limit.
+  it('treats a brief of invisible characters as empty and ignores invisible padding', async () => {
+    const client = fakeClient()
+    const flow = setup(client)
+    const zwsp = String.fromCodePoint(0x200b)
+
+    flow.brief.value = zwsp + zwsp + ' ' + String.fromCodePoint(0xfeff)
+    expect(flow.trimmedBrief.value).toBe('')
+    await flow.runPreview()
+    expect(client.previewSegment).not.toHaveBeenCalled()
+
+    flow.brief.value = 'ş'.repeat(2000) + zwsp.repeat(5)
+    await flow.runPreview()
+    expect(client.previewSegment).toHaveBeenCalledWith({ brief: 'ş'.repeat(2000) }, expect.anything())
+  })
+
+  // ── D7: double clicks and answers that arrive out of order ─────────────
+  function deferred() {
+    let resolve, reject
+    const promise = new Promise((res, rej) => ((resolve = res), (reject = rej)))
+    return { promise, resolve, reject }
+  }
+
+  it('keeps the newest preview when an older request answers last, and aborts the older one', async () => {
+    const pending = []
+    const signals = []
+    const client = fakeClient({
+      previewSegment: vi.fn(({ brief }, opts) => {
+        signals.push(opts?.signal)
+        const d = deferred()
+        pending.push({ brief, d })
+        return d.promise
+      }),
+    })
+    const flow = setup(client)
+    flow.brief.value = 'eski brief'
+    const first = flow.runPreview()
+    flow.brief.value = 'yeni brief'
+    const second = flow.runPreview()
+
+    expect(signals[0]?.aborted).toBe(true) // the stale request is cancelled
+    expect(signals[1]?.aborted).toBe(false)
+
+    pending[1].d.resolve({ brief: 'yeni brief', rule, audience: { total: 2, reachable: 2 } })
+    await second
+    expect(flow.preview.value.brief).toBe('yeni brief')
+    expect(flow.previewing.value).toBe(false)
+
+    pending[0].d.resolve({ brief: 'eski brief', rule, audience: { total: 999, reachable: 999 } })
+    await first
+    expect(flow.preview.value.brief).toBe('yeni brief')
+    expect(flow.preview.value.audience.total).toBe(2)
+    expect(flow.briefDirty.value).toBe(false)
+  })
+
+  it('ignores an error from a stale preview request', async () => {
+    const pending = []
+    const client = fakeClient({
+      previewSegment: vi.fn(() => {
+        const d = deferred()
+        pending.push(d)
+        return d.promise
+      }),
+    })
+    const flow = setup(client)
+    flow.brief.value = 'bir'
+    const first = flow.runPreview()
+    flow.brief.value = 'iki'
+    const second = flow.runPreview()
+    pending[1].resolve({ brief: 'iki', rule, audience: { total: 1, reachable: 1 } })
+    await second
+    pending[0].reject(new ApiError({ status: 502, code: 'llm_unavailable' }))
+    await first
+    expect(flow.previewError.value).toBeNull()
+    expect(flow.preview.value.brief).toBe('iki')
+  })
+
+  it('creates one campaign and starts one dispatch on a double click', async () => {
+    const created = deferred()
+    const client = fakeClient({ createCampaign: vi.fn(() => created.promise) })
+    const flow = setup(client)
+    await toReview(flow)
+    const a = flow.approveAndSend()
+    const b = flow.approveAndSend()
+    created.resolve({ campaign: { id: 42, status: 'approved' }, messages: [], audience: {} })
+    await Promise.all([a, b])
+    expect(client.createCampaign).toHaveBeenCalledTimes(1)
+    expect(client.dispatch).toHaveBeenCalledTimes(1)
+
+    await Promise.all([flow.startDispatch(), flow.startDispatch()])
+    expect(client.dispatch).toHaveBeenCalledTimes(2) // one per click burst, never two at once
+  })
+
+  // ── D8: the campaign exists, sending did not start ─────────────────────
+  it('retries only the dispatch after a 500, never re-creating the campaign', async () => {
+    let attempt = 0
+    const client = fakeClient({
+      dispatch: vi.fn(async () => {
+        if (++attempt === 1) throw new ApiError({ status: 500, code: 'internal' })
+        return { campaign_id: 42, state: 'planning', stream_url: '/api/campaigns/42/dispatch/stream' }
+      }),
+    })
+    const flow = setup(client)
+    await toReview(flow)
+    await flow.approveAndSend()
+    expect(flow.step.value).toBe(5)
+    expect(flow.locked.value).toBe(true)
+    expect(flow.dispatchError.value?.code).toBe('internal')
+    expect(FakeEventSource.instances).toHaveLength(0)
+
+    await flow.approveAndSend() // the approve button is gone; even if called, it must not create again
+    expect(client.createCampaign).toHaveBeenCalledTimes(1)
+
+    await flow.startDispatch() // "Tekrar dene"
+    expect(client.dispatch).toHaveBeenCalledTimes(2)
+    expect(client.dispatch).toHaveBeenLastCalledWith(42)
+    expect(flow.dispatchError.value).toBeNull()
+    expect(FakeEventSource.instances.at(-1).url).toBe('/api/campaigns/42/dispatch/stream')
+  })
+
+  it('explains a 409 invalid_state and keeps the campaign', async () => {
+    const client = fakeClient({
+      dispatch: vi.fn(async () => {
+        throw new ApiError({ status: 409, code: 'invalid_state', message: 'campaign is completed; only approved campaigns can be dispatched' })
+      }),
+    })
+    const flow = setup(client)
+    await toReview(flow)
+    await flow.approveAndSend()
+    expect(flow.dispatchError.value.userMessage).toMatch(/bu durumda gönderilemez/)
+    expect(flow.campaign.value.campaign.id).toBe(42)
+    expect(client.createCampaign).toHaveBeenCalledTimes(1)
+  })
+
+  it('resumes an interrupted run through the same endpoint', async () => {
+    const client = fakeClient()
+    const flow = setup(client)
+    await toReview(flow)
+    await flow.approveAndSend()
+    FakeEventSource.instances[0].emit('stats', { state: 'interrupted', live: false, total: 10, processed: 4, channels: {} })
+    expect(flow.live.state.value).toBe('interrupted')
+    await flow.startDispatch() // "Gönderime devam et"
+    expect(client.dispatch).toHaveBeenCalledTimes(2)
+    expect(client.createCampaign).toHaveBeenCalledTimes(1)
+    expect(FakeEventSource.instances).toHaveLength(2)
+  })
 })

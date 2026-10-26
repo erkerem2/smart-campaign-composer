@@ -30,16 +30,49 @@ const USER_MESSAGES = {
   campaign_not_found: 'Kampanya bulunamadı.',
   unsupported_media_type: 'İstek JSON olarak gönderilmedi.',
   internal: 'Sunucuda beklenmeyen bir hata oluştu. Ayrıntılar backend loglarında.',
+  body_too_large: 'Gönderilen içerik çok büyük. Metinleri kısaltıp tekrar deneyin.',
+  origin_not_allowed: 'Bu sayfanın adresinden API çağrısına izin verilmiyor (CORS ayarı).',
+  not_found: 'İstenen adres sunucuda bulunamadı.',
+  invalid_id: 'Kampanya numarası geçersiz.',
+  // Answers from a proxy / gateway in front of the API (usually HTML).
+  rate_limited: 'Çok fazla istek gönderildi. Birkaç saniye sonra tekrar deneyin.',
+  bad_gateway: 'Sunucuya şu an ulaşılamıyor (yeniden başlıyor olabilir). Birazdan tekrar deneyin.',
+  unavailable: 'Sunucu geçici olarak hizmet veremiyor. Birazdan tekrar deneyin.',
+  gateway_timeout: 'Sunucu zamanında yanıt vermedi. Tekrar deneyin.',
+  http_error: 'İstek sunucu tarafından reddedildi.',
+}
+
+// Status codes a proxy or gateway answers with when the request never reached
+// the API (or the API did not answer in time), with the code the UI uses.
+const STATUS_CODES = {
+  413: 'body_too_large',
+  429: 'rate_limited',
+  502: 'bad_gateway',
+  503: 'unavailable',
+  504: 'gateway_timeout',
+}
+
+/**
+ * parseRetryAfter reads a Retry-After header (delay-seconds or HTTP-date,
+ * RFC 9110) into milliseconds; 0 when absent or invalid.
+ */
+export function parseRetryAfter(value, now = Date.now()) {
+  const v = String(value ?? '').trim()
+  if (!v) return 0
+  if (/^\d+$/.test(v)) return Number(v) * 1000
+  const at = Date.parse(v)
+  return Number.isNaN(at) ? 0 : Math.max(0, at - now)
 }
 
 export class ApiError extends Error {
-  constructor({ status = 0, code = 'unknown', message = '', path, issues } = {}) {
+  constructor({ status = 0, code = 'unknown', message = '', path, issues, retryAfterMs = 0 } = {}) {
     super(message || code)
     this.name = 'ApiError'
     this.status = status
     this.code = code
     this.path = path
     this.issues = Array.isArray(issues) ? issues : []
+    this.retryAfterMs = retryAfterMs
   }
 
   /** Turkish, user-facing sentence; server detail is appended where it helps. */
@@ -67,9 +100,12 @@ async function readBody(res) {
 /** toApiError converts a non-2xx response into an ApiError. */
 export async function toApiError(res) {
   const body = await readBody(res)
+  const retryAfterMs = parseRetryAfter(res.headers.get('retry-after'))
   const e = body && body.error
-  if (e && typeof e === 'object') return new ApiError({ status: res.status, ...e })
-  return new ApiError({ status: res.status, code: res.status >= 500 ? 'internal' : 'http_error', message: `HTTP ${res.status}` })
+  if (e && typeof e === 'object') return new ApiError({ status: res.status, retryAfterMs, ...e })
+  // Not the API's JSON envelope: a proxy or gateway answered (HTML, empty).
+  const code = STATUS_CODES[res.status] || (res.status >= 500 ? 'internal' : 'http_error')
+  return new ApiError({ status: res.status, code, message: `HTTP ${res.status}`, retryAfterMs })
 }
 
 /**

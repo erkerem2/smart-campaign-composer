@@ -2,11 +2,15 @@ package dispatch
 
 import (
 	"context"
+	crand "crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"smart-campaign-composer/backend/internal/domain"
@@ -22,6 +26,18 @@ var (
 	// ErrNoApprovedMessages is returned when an approved campaign has no
 	// approved content.
 	ErrNoApprovedMessages = errors.New("dispatch: campaign has no approved messages")
+	// ErrUnrecorded is a run's error when the outcome of some deliveries
+	// could not be written to the store. Those rows stay pending, so the
+	// campaign stays 'sending' and a Resume reconciles them.
+	ErrUnrecorded = errors.New("dispatch: delivery outcome could not be recorded")
+)
+
+// Final writes (MarkSent / MarkFailed) are retried with a short doubling
+// delay before a run gives up on recording an outcome: SQLite answers
+// SQLITE_BUSY when another writer holds the lock longer than busy_timeout.
+const (
+	persistAttempts = 4
+	persistBackoff  = 20 * time.Millisecond
 )
 
 // Config tunes the dispatcher. Zero values are replaced by DefaultConfig's.
@@ -32,6 +48,9 @@ type Config struct {
 	// RateSafetyMargin widens the window the limiter enforces (1s + 50ms by
 	// default, ≈95 msg/s) so the cap also holds as observed by the provider,
 	// after network and scheduling jitter between our send and their arrival.
+	// Without it a burst can land exactly on the window boundary and a
+	// provider counting closed windows sees up to 2 × the limit. Zero means
+	// the default; a negative value disables the margin.
 	RateSafetyMargin time.Duration
 	RateBurst        int // token bucket depth; small to keep the flow smooth
 	MaxRetries       int // retries after the first attempt (CASE_SPEC: 3)
@@ -40,6 +59,10 @@ type Config struct {
 	MaxRetryAfter    time.Duration // cap on the provider's Retry-After
 	SendTimeout      time.Duration // per attempt
 	ClaimBatchSize   int           // users per claim transaction
+	// LeaseTTL is how long a run's ownership of its campaign lasts without
+	// renewal; it is renewed every LeaseTTL/3. After a crash, another
+	// dispatcher can resume the campaign once the lease has expired.
+	LeaseTTL time.Duration
 }
 
 // DefaultConfig returns production defaults.
@@ -56,6 +79,7 @@ func DefaultConfig() Config {
 		MaxRetryAfter:     30 * time.Second,
 		SendTimeout:       5 * time.Second,
 		ClaimBatchSize:    500,
+		LeaseTTL:          30 * time.Second,
 	}
 }
 
@@ -70,7 +94,13 @@ func (c Config) withDefaults() Config {
 	if c.RateWindow <= 0 {
 		c.RateWindow = d.RateWindow
 	}
-	if c.RateSafetyMargin < 0 {
+	// Zero means "default" like every other field (a partially filled
+	// Config must not silently lose the margin); a negative value turns the
+	// margin off explicitly.
+	switch {
+	case c.RateSafetyMargin == 0:
+		c.RateSafetyMargin = d.RateSafetyMargin
+	case c.RateSafetyMargin < 0:
 		c.RateSafetyMargin = 0
 	}
 	if c.RateBurst <= 0 {
@@ -95,6 +125,9 @@ func (c Config) withDefaults() Config {
 	if c.ClaimBatchSize <= 0 {
 		c.ClaimBatchSize = d.ClaimBatchSize
 	}
+	if c.LeaseTTL <= 0 {
+		c.LeaseTTL = d.LeaseTTL
+	}
 	return c
 }
 
@@ -109,6 +142,17 @@ func WithRand(f func() float64) Option { return func(d *Dispatcher) { d.rand = f
 
 // WithLogger sets the logger.
 func WithLogger(l *slog.Logger) Option { return func(d *Dispatcher) { d.log = l } }
+
+// WithOwner sets the identity this dispatcher uses for campaign leases
+// (default: host name, process id and a random suffix, unique per instance).
+func WithOwner(id string) Option { return func(d *Dispatcher) { d.owner = id } }
+
+func newOwnerID() string {
+	host, _ := os.Hostname()
+	b := make([]byte, 6)
+	_, _ = crand.Read(b)
+	return fmt.Sprintf("%s/%d/%s", host, os.Getpid(), hex.EncodeToString(b))
+}
 
 // Dispatcher delivers approved campaigns through a rate-limited worker pool.
 //
@@ -126,6 +170,7 @@ type Dispatcher struct {
 	clock     Clock
 	rand      func() float64
 	log       *slog.Logger
+	owner     string // lease identity, unique per Dispatcher
 	backoff   Backoff
 	limiters  map[domain.Channel]*Limiter // shared by every run: the provider limit is global
 
@@ -142,6 +187,7 @@ func New(store Store, campaigns CampaignStore, sender Sender, renderer Renderer,
 	d := &Dispatcher{
 		cfg: cfg.withDefaults(), store: store, campaigns: campaigns, sender: sender, renderer: renderer,
 		clock: realClock{}, rand: rand.Float64, log: slog.Default(), runs: map[int64]*Run{},
+		owner: newOwnerID(),
 	}
 	for _, o := range opts {
 		o(d)
@@ -167,6 +213,12 @@ type Run struct {
 	progress   *progress
 	done       chan struct{}
 	err        error
+	// unrecorded counts deliveries whose final state could not be
+	// persisted; any makes the run end interrupted instead of completed.
+	unrecorded atomic.Int64
+	// leaseLost is set when another dispatcher took the campaign over; the
+	// run stops without touching the campaign any further.
+	leaseLost atomic.Bool
 }
 
 // Done is closed when the run has finished.
@@ -219,15 +271,20 @@ func (d *Dispatcher) begin(ctx context.Context, campaignID int64, audience Audie
 	if err != nil {
 		return nil, err
 	}
-	if !resume {
-		// Compare-and-set: of two concurrent Start calls (or processes) only
-		// one moves the campaign to sending.
-		if err := d.campaigns.TransitionStatus(ctx, campaignID, domain.CampaignStatusApproved, domain.CampaignStatusSending); err != nil {
-			if errors.Is(err, domain.ErrStatusConflict) {
-				return nil, fmt.Errorf("%w: %v", ErrInvalidState, err)
-			}
-			return nil, err
+	// Compare-and-set on the campaign row: of concurrent Start or Resume
+	// calls — in this process or any other sharing the database — exactly
+	// one becomes the owner of the run. A Start also moves the campaign
+	// approved → sending; a Resume only takes over a run whose owner is gone
+	// (no owner, or its lease expired).
+	now := d.clock.Now()
+	if err := d.campaigns.AcquireDispatch(ctx, campaignID, want, d.owner, now, now.Add(d.cfg.LeaseTTL)); err != nil {
+		switch {
+		case errors.Is(err, domain.ErrLeaseHeld):
+			return nil, fmt.Errorf("%w: %v", ErrAlreadyRunning, err)
+		case errors.Is(err, domain.ErrStatusConflict):
+			return nil, fmt.Errorf("%w: %v", ErrInvalidState, err)
 		}
+		return nil, err
 	}
 
 	run := &Run{CampaignID: campaignID, progress: newProgress(campaignID, d.clock.Now()), done: make(chan struct{})}
@@ -306,28 +363,56 @@ func (d *Dispatcher) execute(ctx context.Context, run *Run, audience AudienceSou
 	p := run.progress
 	log := d.log.With("campaign_id", run.CampaignID, "resume", resume)
 
-	jobs, err := d.plan(ctx, run, audience, msgs, resume)
-	if err != nil {
-		run.err = err
-		if ctx.Err() != nil {
-			p.setState(StateInterrupted, d.clock.Now(), err)
-			log.Warn("dispatch interrupted while planning", "err", err)
-			return
+	// runCtx is also cancelled when the lease is lost, which stops the
+	// workers: another dispatcher now owns the campaign.
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	stopHeartbeat := d.heartbeat(runCtx, run, cancelRun)
+
+	jobs, err := d.plan(runCtx, run, audience, msgs, resume)
+	if err == nil {
+		p.setState(StateSending, time.Time{}, nil)
+		d.deliver(runCtx, run, jobs)
+	}
+	stopHeartbeat()
+
+	switch {
+	case run.leaseLost.Load():
+		// Not ours any more: the new owner finishes the campaign.
+		run.err = fmt.Errorf("%w: another dispatcher took over campaign %d", domain.ErrLeaseLost, run.CampaignID)
+		p.setState(StateInterrupted, d.clock.Now(), run.err)
+		log.Warn("dispatch stopped: lease lost to another dispatcher")
+		return
+	case ctx.Err() != nil:
+		// Shutdown. Deliveries not finished stay pending; the lease is
+		// released so a resume (here or elsewhere) does not have to wait for
+		// it to expire.
+		if err == nil {
+			err = ctx.Err()
 		}
+		run.err = err
+		p.setState(StateInterrupted, d.clock.Now(), err)
+		d.release(ctx, run, domain.CampaignStatusSending)
+		log.Warn("dispatch interrupted; resume to finish pending deliveries", "err", err)
+		return
+	case err != nil:
 		// Claims written so far stay pending; the campaign stays 'sending'
 		// and can be resumed once the cause is fixed.
+		run.err = err
 		p.setState(StateFailed, d.clock.Now(), err)
+		d.release(ctx, run, domain.CampaignStatusSending)
 		log.Error("dispatch planning failed", "err", err)
 		return
 	}
-
-	p.setState(StateSending, time.Time{}, nil)
-	d.deliver(ctx, run, jobs)
-
-	if ctx.Err() != nil {
-		run.err = ctx.Err()
-		p.setState(StateInterrupted, d.clock.Now(), ctx.Err())
-		log.Warn("dispatch interrupted; resume to finish pending deliveries")
+	if n := run.unrecorded.Load(); n > 0 {
+		// Some outcomes exist only in memory: their rows are still pending.
+		// Completing the campaign would orphan them (a completed campaign
+		// cannot be resumed), so it stays 'sending' and the dashboard
+		// offers a resume, which re-sends with the same idempotency keys.
+		run.err = fmt.Errorf("%w: %d deliveries; resume the campaign to reconcile them", ErrUnrecorded, n)
+		p.setState(StateInterrupted, d.clock.Now(), run.err)
+		d.release(ctx, run, domain.CampaignStatusSending)
+		log.Error("dispatch finished with unrecorded deliveries", "unrecorded", n)
 		return
 	}
 
@@ -336,13 +421,64 @@ func (d *Dispatcher) execute(ctx context.Context, run *Run, audience AudienceSou
 	if snap.Total > 0 && snap.Sent == 0 {
 		final, state = domain.CampaignStatusFailed, StateFailed
 	}
-	if err := d.campaigns.TransitionStatus(context.WithoutCancel(ctx), run.CampaignID, domain.CampaignStatusSending, final); err != nil {
+	if err := d.release(ctx, run, final); err != nil {
 		run.err = err
-		log.Error("could not finalise campaign status", "err", err)
 	}
 	p.setState(state, d.clock.Now(), nil)
 	log.Info("dispatch finished", "state", state, "sent", snap.Sent, "failed", snap.Failed,
 		"retried", snap.Retried, "opted_out", snap.OptedOut, "skipped", snap.Skipped)
+}
+
+// heartbeat renews the run's lease every LeaseTTL/3 until stop is called. If
+// the lease turns out to be lost, it flags the run and calls lost.
+//
+// It ticks on real time even when the dispatcher runs on a test clock: a
+// virtual clock's Sleep returns at once, which would turn the loop into a
+// busy spin. Lease timestamps still come from the dispatcher's clock.
+func (d *Dispatcher) heartbeat(ctx context.Context, run *Run, lost func()) (stop func()) {
+	done, stopped := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(stopped)
+		t := time.NewTicker(max(d.cfg.LeaseTTL/3, time.Millisecond))
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+			err := d.campaigns.RenewDispatch(ctx, run.CampaignID, d.owner, d.clock.Now().Add(d.cfg.LeaseTTL))
+			switch {
+			case err == nil:
+			case errors.Is(err, domain.ErrLeaseLost):
+				run.leaseLost.Store(true)
+				lost()
+				return
+			case ctx.Err() == nil:
+				// A transient database error: keep the run going and try
+				// again; the TTL leaves room for two more attempts.
+				d.log.Warn("could not renew dispatch lease", "campaign_id", run.CampaignID, "err", err)
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-stopped
+	}
+}
+
+// release ends this dispatcher's ownership of the run, moving the campaign
+// from sending to `to` (sending itself when the run can be resumed).
+func (d *Dispatcher) release(ctx context.Context, run *Run, to domain.CampaignStatus) error {
+	rctx, cancel := finalCtx(ctx)
+	defer cancel()
+	err := d.campaigns.ReleaseDispatch(rctx, run.CampaignID, d.owner, to)
+	if err != nil {
+		d.log.Error("could not release dispatch lease", "campaign_id", run.CampaignID, "to", to, "err", err)
+	}
+	return err
 }
 
 // plan resolves the audience and claims every delivery before the first
@@ -397,6 +533,9 @@ func (d *Dispatcher) plan(ctx context.Context, run *Run, audience AudienceSource
 	// longer targeted is wrong, so they are closed as failed.
 	for ch, ids := range pending {
 		for id := range ids {
+			// It is still one of this run's deliveries: count it in the
+			// total, or Processed would exceed Total on the dashboard.
+			run.progress.channels[ch].total.Add(1)
 			d.closeFailed(ctx, run, ch, id, 0, "recipient no longer in audience on resume")
 		}
 	}
@@ -534,25 +673,51 @@ func finalCtx(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 }
 
-func (d *Dispatcher) closeSent(ctx context.Context, run *Run, j job, r Receipt, retries int) {
-	c := run.progress.channels[j.msg.Channel]
-	c.sent.Add(1)
+// persist runs a final write, retrying transient failures. If it still
+// fails, the delivery is counted as unrecorded: its row stays pending and
+// the run will not complete the campaign.
+func (d *Dispatcher) persist(ctx context.Context, run *Run, what string, ch domain.Channel, userID int64, write func(context.Context) error) {
 	wctx, cancel := finalCtx(ctx)
 	defer cancel()
-	if err := d.store.MarkSent(wctx, run.CampaignID, j.userID, j.msg.Channel, r.ProviderMessageID, retries, d.clock.Now()); err != nil {
-		// The row stays pending; a Resume would re-send with the same key
-		// and the provider would answer with the original message id.
-		d.log.Error("mark sent", "campaign_id", run.CampaignID, "user_id", j.userID, "channel", j.msg.Channel, "err", err)
+	var err error
+	delay := persistBackoff
+	for attempt := 1; attempt <= persistAttempts; attempt++ {
+		if err = write(wctx); err == nil {
+			return
+		}
+		if errors.Is(err, domain.ErrDispatchNotPending) {
+			// Already final: recorded by an earlier attempt whose answer was
+			// lost, or by another run. Final states are never overwritten,
+			// and there is nothing left to reconcile.
+			d.log.Warn(what+" was already recorded", "campaign_id", run.CampaignID, "user_id", userID, "channel", ch)
+			return
+		}
+		if attempt == persistAttempts || d.clock.Sleep(wctx, delay) != nil {
+			break
+		}
+		delay *= 2
 	}
+	run.unrecorded.Add(1)
+	d.log.Error(what+" could not be recorded; the delivery stays pending until the campaign is resumed",
+		"campaign_id", run.CampaignID, "user_id", userID, "channel", ch, "err", err)
+}
+
+func (d *Dispatcher) closeSent(ctx context.Context, run *Run, j job, r Receipt, retries int) {
+	// The provider accepted the message: it counts as sent on the live
+	// dashboard even if recording it fails (it was delivered). The pending
+	// row is reconciled by a resume, which the provider answers with the
+	// original message id.
+	run.progress.channels[j.msg.Channel].sent.Add(1)
+	d.persist(ctx, run, "sent delivery", j.msg.Channel, j.userID, func(wctx context.Context) error {
+		return d.store.MarkSent(wctx, run.CampaignID, j.userID, j.msg.Channel, r.ProviderMessageID, retries, d.clock.Now())
+	})
 }
 
 func (d *Dispatcher) closeFailed(ctx context.Context, run *Run, ch domain.Channel, userID int64, retries int, reason string) {
 	run.progress.channels[ch].failed.Add(1)
-	wctx, cancel := finalCtx(ctx)
-	defer cancel()
-	if err := d.store.MarkFailed(wctx, run.CampaignID, userID, ch, retries, reason, d.clock.Now()); err != nil {
-		d.log.Error("mark failed", "campaign_id", run.CampaignID, "user_id", userID, "channel", ch, "err", err)
-	}
+	d.persist(ctx, run, "failed delivery", ch, userID, func(wctx context.Context) error {
+		return d.store.MarkFailed(wctx, run.CampaignID, userID, ch, retries, reason, d.clock.Now())
+	})
 }
 
 func isClosed(ch <-chan struct{}) bool {

@@ -48,7 +48,7 @@ Decoding is strict: exactly these three keys, all strings, no duplicates, nothin
 Lengths are Unicode code points, so `ş` counts as one. Estimated length swaps each placeholder for the
 variable's `EstimatedRunes`: `{{first_name}}` is 14 runes as written and 10 when estimated.
 
-Variables: `{{first_name}}` (≈10, fallback "Değerli müşterimiz"), `{{last_name}}` (≈10).
+Variables: `{{first_name}}` (average ≈10, fallback "Değerli müşterimiz"; budgeted at 18 = max(estimate, fallback), see `Variable.Width`), `{{last_name}}` (≈10).
 `{{ first_name }}` is accepted; `{{credit_card}}`, `{{First_Name}}`, `{first_name}}`, `{{{x}}}` are rejected.
 
 Map errors with `errors.Is`: `ErrInvalidContent` (umbrella) and the field kinds `ErrTooLong`,

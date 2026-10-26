@@ -5,13 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
-	"unicode/utf8"
 
 	"smart-campaign-composer/backend/internal/composer"
 	"smart-campaign-composer/backend/internal/dispatch"
 	"smart-campaign-composer/backend/internal/domain"
 	"smart-campaign-composer/backend/internal/segment"
+	"smart-campaign-composer/backend/internal/textguard"
 )
 
 type createCampaignRequest struct {
@@ -46,12 +45,14 @@ func (s *Server) handleCreateCampaign(w http.ResponseWriter, r *http.Request) {
 		writeError(w, e)
 		return
 	}
-	brief := strings.TrimSpace(req.Brief)
+	// The stored brief is cleaned like the one sent to the models: no
+	// invisible characters, trimmed; one made only of those is empty.
+	brief := textguard.CleanBrief(req.Brief)
 	switch {
 	case brief == "":
 		writeError(w, badRequest("invalid_brief", "brief is required"))
 		return
-	case utf8.RuneCountInString(brief) > segment.MaxBriefRunes:
+	case textguard.BriefRunes(brief) > segment.MaxBriefRunes:
 		writeError(w, badRequest("invalid_brief", fmt.Sprintf("brief exceeds %d characters", segment.MaxBriefRunes)))
 		return
 	case len(req.SegmentRule) == 0 || string(req.SegmentRule) == "null":

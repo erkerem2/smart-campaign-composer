@@ -28,7 +28,7 @@ const check = computed(() => f.checks.value[props.field])
 
 // Length problems are already shown by the counter; list the rest.
 const issues = computed(() => [
-  ...f.clientIssues.value.filter((i) => i.field === props.field && i.code !== 'empty' && i.code !== 'too_long'),
+  ...f.clientIssues.value.filter((i) => i.field === props.field && i.code !== 'empty' && i.code !== 'too_long' && i.code !== 'estimated_too_long'),
   ...f.serverIssues.value.filter((i) => i.field === props.field),
 ])
 const invalid = computed(

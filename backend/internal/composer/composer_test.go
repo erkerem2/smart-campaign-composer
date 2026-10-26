@@ -38,7 +38,7 @@ func TestGenerateReference(t *testing.T) {
 	if d.Message != composer.ReferenceMessage || d.Attempts != 1 {
 		t.Fatalf("draft = %+v", d)
 	}
-	if d.Report.SMS.Runes != 128 || d.Report.SMS.EstimatedRunes != 124 || d.Report.EmailSubject.Runes > 80 {
+	if d.Report.SMS.Runes != 128 || d.Report.SMS.EstimatedRunes != 132 || d.Report.EmailSubject.Runes > 80 {
 		t.Errorf("report = %+v", d.Report)
 	}
 	req := mock.Requests[0]

@@ -16,23 +16,35 @@ const HISTORY = 240 // throughput samples kept for the chart (~2 min at 500 ms)
  *
  * EventSource reconnects by itself after a dropped connection; if it gives
  * up (CLOSED) or the server reports a stream error, the composable falls back
- * to polling the stats endpoint until the run is final.
+ * to polling the stats endpoint until the run is final. Polling stops for good
+ * on a permanent error (the campaign is gone: 404, 400, 401, 403, 410) and
+ * backs off exponentially — at least Retry-After — on transient ones (429,
+ * 5xx, network), returning to pollMs after the first success.
  */
 export function useDispatchStream({
   createSource = (url) => new EventSource(url),
   fetchStats = api.dispatchStats,
   now = () => (globalThis.performance || Date).now(),
   pollMs = 1000,
+  maxPollMs = 30_000,
 } = {}) {
   const stats = ref(null)
-  const connection = ref('idle') // idle | connecting | live | reconnecting | polling | closed
+  const connection = ref('idle') // idle | connecting | live | reconnecting | polling | closed | failed
   const instant = ref({ total: 0, sms: 0, email: 0 })
   const history = ref([]) // [{t (s since start), sms, email}]
+  const pollError = ref(null) // last polling error (ApiError), null after a success
   let source = null
   let pollTimer = null
   let campaignId = null
   let samples = []
   let t0 = null
+  // Poll answers can overlap and resolve out of order. epoch changes on
+  // every connect / disconnect / finish, so an answer to a poll started
+  // before is dropped; seq / applied keep only answers newer than the last
+  // one applied within the same epoch.
+  let epoch = 0
+  let seq = 0
+  let applied = 0
 
   const state = computed(() => stats.value?.state || 'planning')
   const final = computed(() => FINAL_STATES.includes(state.value))
@@ -72,6 +84,7 @@ export function useDispatchStream({
   }
 
   function finish() {
+    epoch++
     closeSource()
     stopPolling()
     connection.value = 'closed'
@@ -84,29 +97,76 @@ export function useDispatchStream({
     }
   }
 
+  let polling = false
+  let failures = 0
+  let pollDelay = pollMs
+
   function stopPolling() {
-    clearInterval(pollTimer)
+    polling = false
+    clearTimeout(pollTimer)
     pollTimer = null
+  }
+
+  function schedule(ms) {
+    clearTimeout(pollTimer)
+    pollTimer = setTimeout(tick, ms)
+  }
+
+  const PERMANENT = new Set([400, 401, 403, 404, 410])
+
+  async function tick() {
+    if (!polling) return
+    const myEpoch = epoch
+    const mine = ++seq
+    // Fixed cadence: the next poll is planned when this one starts, so a slow
+    // answer does not slow the dashboard down (overlapping answers are
+    // ordered by seq / epoch below).
+    schedule(pollDelay)
+    try {
+      const s = await fetchStats(campaignId)
+      // Stale: the run finished, we disconnected or moved to another
+      // campaign, or a newer poll has already been applied.
+      if (myEpoch !== epoch || mine < applied) return
+      applied = mine
+      pollError.value = null
+      if (failures > 0) {
+        failures = 0
+        pollDelay = pollMs
+        schedule(pollMs)
+      }
+      apply(s)
+    } catch (err) {
+      if (myEpoch !== epoch) return
+      pollError.value = err
+      if (PERMANENT.has(err?.status)) {
+        // The campaign is gone (or we may not see it): polling again cannot
+        // help, and must not run forever in a background tab.
+        epoch++
+        stopPolling()
+        connection.value = 'failed'
+        return
+      }
+      failures++
+      pollDelay = Math.min(maxPollMs, pollMs * 2 ** failures)
+      schedule(Math.max(pollDelay, err?.retryAfterMs || 0))
+    }
   }
 
   function startPolling() {
     closeSource()
-    if (pollTimer || campaignId === null) return
+    if (polling || campaignId === null) return
+    polling = true
+    failures = 0
+    pollDelay = pollMs
     connection.value = 'polling'
-    const tick = async () => {
-      try {
-        apply(await fetchStats(campaignId))
-      } catch {
-        /* keep polling; the health badge shows whether the API is down */
-      }
-    }
     tick()
-    pollTimer = setInterval(tick, pollMs)
   }
 
   function connect(id, streamUrl) {
     disconnect()
     campaignId = id
+    seq = 0
+    applied = 0
     samples = []
     t0 = null
     history.value = []
@@ -144,6 +204,7 @@ export function useDispatchStream({
   }
 
   function disconnect() {
+    epoch++
     closeSource()
     stopPolling()
     connection.value = 'idle'
@@ -153,11 +214,12 @@ export function useDispatchStream({
     disconnect()
     campaignId = null
     stats.value = null
+    pollError.value = null
     history.value = []
     instant.value = { total: 0, sms: 0, email: 0 }
   }
 
   if (getCurrentScope()) onScopeDispose(disconnect)
 
-  return { stats, state, final, progress, instant, history, connection, connect, disconnect, reset }
+  return { stats, state, final, progress, instant, history, connection, pollError, connect, disconnect, reset }
 }

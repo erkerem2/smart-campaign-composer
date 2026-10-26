@@ -81,7 +81,13 @@ CREATE TABLE IF NOT EXISTS campaigns (
     -- Canonical, validated segment rule tree (JSON AST, never SQL) the
     -- marketer approved. Re-validated by the segment parser when read.
     -- (Schema version 3; added with ALTER TABLE on older databases.)
-    segment_rule TEXT CHECK (segment_rule IS NULL OR json_valid(segment_rule))
+    segment_rule TEXT CHECK (segment_rule IS NULL OR json_valid(segment_rule)),
+    -- Dispatch lease (schema version 4): the dispatcher that owns the run of
+    -- a 'sending' campaign, and until when (Unix milliseconds). Taken with a
+    -- compare-and-set, renewed by a heartbeat, cleared when the run ends; a
+    -- crashed owner's lease simply expires. (ALTER TABLE on older databases.)
+    dispatch_owner       TEXT,
+    dispatch_lease_until INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS campaign_messages (

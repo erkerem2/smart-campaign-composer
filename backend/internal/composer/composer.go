@@ -9,11 +9,13 @@ import (
 	"io"
 	"strings"
 	"time"
-	"unicode/utf8"
+
+	"smart-campaign-composer/backend/internal/textguard"
 )
 
-// MaxBriefRunes caps the brief length sent to the LLM.
-const MaxBriefRunes = 2000
+// MaxBriefRunes caps the brief length sent to the LLM, in code points after
+// textguard.CleanBrief.
+const MaxBriefRunes = textguard.MaxBriefRunes
 
 // maxOutputBytes caps the accumulated tool input of one attempt.
 const maxOutputBytes = 256 << 10
@@ -303,11 +305,11 @@ func (c *Composer) withTimeout(ctx context.Context) (context.Context, context.Ca
 }
 
 func checkBrief(brief string) (string, error) {
-	brief = strings.TrimSpace(strings.ToValidUTF8(brief, ""))
+	brief = textguard.CleanBrief(brief) // see segment.Engine.Translate
 	if brief == "" {
 		return "", ErrEmptyBrief
 	}
-	if utf8.RuneCountInString(brief) > MaxBriefRunes {
+	if textguard.BriefRunes(brief) > MaxBriefRunes {
 		return "", ErrBriefTooLong
 	}
 	return brief, nil

@@ -128,18 +128,21 @@ func TestRenderRejectsUnknownAndMalformed(t *testing.T) {
 // The validator works with an estimate; the renderer enforces the hard limit
 // on the real value.
 func TestRenderEnforcesHardLimits(t *testing.T) {
-	tmpl := "{{first_name}}" + strings.Repeat("a", 146) // raw 160, estimated 156
+	tmpl := "{{first_name}}" + strings.Repeat("a", 142) // raw 156, estimated 160
 	if _, err := composer.DefaultValidator.Validate(withSMS(tmpl)); err != nil {
 		t.Fatalf("template passes validation: %v", err)
 	}
 	if _, err := composer.DefaultRenderer.RenderSMS(tmpl, user("Mehmetcan")); err != nil {
-		t.Fatalf("9-letter name fits (155): %v", err)
+		t.Fatalf("9-letter name fits (151): %v", err)
 	}
-	_, err := composer.DefaultRenderer.RenderSMS(tmpl, user("Abdurrahmangazi")) // 15 → 161
+	if _, err := composer.DefaultRenderer.RenderSMS(tmpl, user("")); err != nil {
+		t.Fatalf("the fallback fits exactly (160): %v", err)
+	}
+	_, err := composer.DefaultRenderer.RenderSMS(tmpl, user("Abdurrahmangazi Mehmet")) // 22 → 164
 	if !errors.Is(err, composer.ErrRenderedTooLong) {
 		t.Fatalf("want ErrRenderedTooLong, got %v", err)
 	}
-	_, _, _, err = composer.DefaultRenderer.RenderEmail("{{first_name}}"+strings.Repeat("b", 66), "Gövde", user("Abdurrahmangazi"))
+	_, _, _, err = composer.DefaultRenderer.RenderEmail("{{first_name}}"+strings.Repeat("b", 62), "Gövde", user("Abdurrahmangazi Mehmet"))
 	if !errors.Is(err, composer.ErrRenderedTooLong) {
 		t.Fatalf("subject: want ErrRenderedTooLong, got %v", err)
 	}
@@ -177,4 +180,16 @@ func TestRenderReferenceForSeedUsers(t *testing.T) {
 		t.Errorf("longest real SMS %d exceeds the estimate %d", maxSMS, est)
 	}
 	t.Logf("%d users: longest SMS %d/160, longest subject %d/80", len(users), maxSMS, maxSubject)
+}
+
+// Invisible format characters in user data are dropped like control
+// characters, so a name cannot smuggle hidden text into a message.
+func TestRenderDropsInvisibleCharactersFromValues(t *testing.T) {
+	got, err := composer.DefaultRenderer.RenderSMS("Merhaba {{first_name}}", user("A\u200bl\ufeffi\u2060\U000E0041"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "Merhaba Ali" {
+		t.Fatalf("got %q", got)
+	}
 }

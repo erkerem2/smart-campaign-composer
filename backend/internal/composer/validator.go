@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"smart-campaign-composer/backend/internal/domain"
+	"smart-campaign-composer/backend/internal/textguard"
 )
 
 // Limits are the channel rules. Lengths are counted in Unicode code points
@@ -121,7 +122,8 @@ func (v *Validator) checkBody(s string, issues []Issue) (FieldStats, BodyFormat,
 
 // checkVariables validates placeholders and computes raw and estimated
 // lengths. The estimate swaps each placeholder token for the variable's
-// EstimatedRunes, so "{{first_name}}" (14 runes) counts as 10.
+// Width (the larger of its estimate and its fallback), so "{{first_name}}"
+// (14 runes) counts as 18 — the width of "Değerli müşterimiz".
 func (v *Validator) checkVariables(f Field, s string, st FieldStats, issues []Issue) (FieldStats, []Issue) {
 	st.Runes = utf8.RuneCountInString(s)
 	st.EstimatedRunes = st.Runes
@@ -137,7 +139,7 @@ func (v *Validator) checkVariables(f Field, s string, st FieldStats, issues []Is
 				"{{%s}} is not supported; allowed: %s", p.Name, braceList(v.Vars.Names())))
 			continue
 		}
-		st.EstimatedRunes += vr.EstimatedRunes - utf8.RuneCountInString(s[p.Start:p.End])
+		st.EstimatedRunes += vr.Width() - utf8.RuneCountInString(s[p.Start:p.End])
 		if !seen[p.Name] {
 			seen[p.Name] = true
 			st.Variables = append(st.Variables, p.Name)
@@ -147,8 +149,9 @@ func (v *Validator) checkVariables(f Field, s string, st FieldStats, issues []Is
 }
 
 // checkCharacters rejects invalid UTF-8, control characters (newline only
-// where allowed; tab only in the body) and bidirectional overrides, which
-// can make a message display differently from what was approved.
+// where allowed; tab only in the body), bidirectional overrides, which can
+// make a message display differently from what was approved, and invisible
+// characters (see isInvisible).
 func checkCharacters(f Field, s string, allowNewline bool, issues []Issue) []Issue {
 	if !utf8.ValidString(s) {
 		return append(issues, newIssue(f, ErrForbiddenCharacter, "invalid UTF-8"))
@@ -159,17 +162,26 @@ func checkCharacters(f Field, s string, allowNewline bool, issues []Issue) []Iss
 		case r == '\t' && f == FieldEmailBody:
 		case (r == '\n' || r == '\r') && !allowNewline:
 			return append(issues, newIssue(f, ErrForbiddenCharacter, "must be a single line"))
+		case r == 0x2028 || r == 0x2029:
+			// Line / paragraph separators are not control characters, but
+			// many renderers break the line on them (and older JavaScript
+			// engines end a string literal): a "single-line" subject could
+			// show a second line, and a body would render differently.
+			return append(issues, newIssue(f, ErrForbiddenCharacter, "contains line separator %U", r))
 		case unicode.IsControl(r), isBidiControl(r):
 			return append(issues, newIssue(f, ErrForbiddenCharacter, "contains control character %U", r))
+		case isInvisible(r):
+			return append(issues, newIssue(f, ErrForbiddenCharacter, "contains invisible character %U", r))
 		}
 	}
 	return issues
 }
 
-func isBidiControl(r rune) bool {
-	return r == 0x061C || r == 0x200E || r == 0x200F ||
-		(r >= 0x202A && r <= 0x202E) || (r >= 0x2066 && r <= 0x2069)
-}
+// isBidiControl and isInvisible are the shared rules (internal/textguard):
+// the brief sent to the models is cleaned with the same definitions.
+func isBidiControl(r rune) bool { return textguard.IsBidiControl(r) }
+
+func isInvisible(r rune) bool { return textguard.IsInvisible(r) }
 
 func braceList(names []string) string {
 	out := make([]string, len(names))

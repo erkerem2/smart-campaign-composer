@@ -8,7 +8,8 @@ import { runeLength } from '../../lib/text.js'
 const props = defineProps({ flow: { type: Object, required: true } })
 const f = props.flow
 
-const length = computed(() => runeLength(f.brief.value))
+// Counted like the server: trimmed, in code points (an emoji is 1, not 2).
+const length = computed(() => runeLength(f.trimmedBrief.value))
 const tooLong = computed(() => length.value > MAX_BRIEF)
 const canRun = computed(() => f.trimmedBrief.value.length > 0 && !tooLong.value && !f.previewing.value && !f.locked.value)
 

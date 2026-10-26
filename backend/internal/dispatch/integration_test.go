@@ -8,6 +8,7 @@ package dispatch_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -438,5 +439,68 @@ func TestInterruptedRunResumesWithoutDuplicates(t *testing.T) {
 	}
 	if c, _ := w.campaigns.GetByID(bg, w.campaignID); c.Status != domain.CampaignStatusCompleted {
 		t.Fatalf("campaign status %s", c.Status)
+	}
+}
+
+// B2 on the real database: a campaign left 'sending' (simulated crash before
+// the lease existed: no owner) is resumed by two dispatcher instances at the
+// same instant. The SQL compare-and-set on the lease lets exactly one run,
+// and the provider accepts every message exactly once.
+func TestConcurrentResumeOnSQLite(t *testing.T) {
+	w := newWorld(t, 80, func(int) (bool, bool) { return true, true })
+	mock, client := startMock(t, provider.Config{MinLatency: time.Millisecond, MaxLatency: 5 * time.Millisecond}, nil)
+	ctx := context.Background()
+	if err := w.campaigns.TransitionStatus(ctx, w.campaignID, domain.CampaignStatusApproved, domain.CampaignStatusSending); err != nil {
+		t.Fatal(err)
+	}
+	ds := []*dispatch.Dispatcher{w.dispatcher(t, client, dispatch.DefaultConfig()), w.dispatcher(t, client, dispatch.DefaultConfig())}
+
+	var (
+		wg    sync.WaitGroup
+		start = make(chan struct{})
+		runs  = make([]*dispatch.Run, 2)
+		errs  = make([]error, 2)
+	)
+	for i := range ds {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			runs[i], errs[i] = ds[i].Resume(ctx, w.campaignID, w.audience())
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	won := 0
+	for i, err := range errs {
+		switch {
+		case err == nil:
+			won++
+			wait(t, runs[i])
+		case errors.Is(err, dispatch.ErrAlreadyRunning):
+		default:
+			t.Fatalf("resume %d: %v", i, err)
+		}
+	}
+	if won != 1 {
+		t.Fatalf("%d resumes succeeded, want exactly 1", won)
+	}
+	byKey := map[string]int{}
+	requests := 0
+	for _, a := range mock.Attempts() {
+		requests++
+		if a.Status == http.StatusAccepted || a.Status == http.StatusOK {
+			byKey[a.IdempotencyKey]++
+		}
+	}
+	if len(byKey) != 160 || requests != 160 {
+		t.Fatalf("provider saw %d requests for %d keys, want 160 requests for 160 keys (no second run)", requests, len(byKey))
+	}
+	if c, _ := w.campaigns.GetByID(ctx, w.campaignID); c.Status != domain.CampaignStatusCompleted {
+		t.Fatalf("campaign status %s", c.Status)
+	}
+	if owner, _, _ := w.campaigns.DispatchLease(ctx, w.campaignID); owner != "" {
+		t.Fatalf("lease not released: %q", owner)
 	}
 }

@@ -63,6 +63,7 @@ const connectionLabel = computed(
       reconnecting: 'Yeniden bağlanıyor',
       polling: 'Her saniye yenileniyor',
       closed: 'Akış kapandı',
+      failed: 'Durum alınamıyor',
     })[live.connection.value] || '',
 )
 </script>
@@ -94,6 +95,10 @@ const connectionLabel = computed(
       </button>
     </Notice>
     <Notice v-if="s?.error" tone="bad" title="Gönderim hatası" class="mt-6">{{ s.error }}</Notice>
+    <Notice v-if="live.connection.value === 'failed'" tone="bad" title="Gönderim durumu alınamıyor" class="mt-6" data-test="poll-failed">
+      {{ live.pollError.value?.userMessage || 'Sunucu bu kampanyanın durumunu vermiyor.' }} Gönderim sunucuda sürüyorsa
+      etkilenmez; sayfayı yenileyerek tekrar bakabilirsiniz.
+    </Notice>
 
     <!-- progress -->
     <div class="panel mt-8 p-5">

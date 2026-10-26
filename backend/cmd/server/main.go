@@ -33,6 +33,7 @@ import (
 	"smart-campaign-composer/backend/internal/composer"
 	"smart-campaign-composer/backend/internal/config"
 	"smart-campaign-composer/backend/internal/dispatch"
+	"smart-campaign-composer/backend/internal/httpserver"
 	"smart-campaign-composer/backend/internal/provider"
 	"smart-campaign-composer/backend/internal/repository"
 	"smart-campaign-composer/backend/internal/segment"
@@ -124,15 +125,8 @@ func run() error {
 		return err
 	}
 
-	srv := &http.Server{
-		Addr:              cfg.HTTPAddr,
-		Handler:           server.Handler(),
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		IdleTimeout:       120 * time.Second,
-		// No WriteTimeout: SSE responses stay open for the whole generation
-		// or dispatch run; they end when the client disconnects.
-	}
+	// Timeout policy (SSE-safe, no WriteTimeout): see internal/httpserver.
+	srv := httpserver.New(cfg.HTTPAddr, server.Handler())
 
 	errCh := make(chan error, 1)
 	go func() {

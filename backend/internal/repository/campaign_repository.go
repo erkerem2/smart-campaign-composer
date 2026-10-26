@@ -277,3 +277,110 @@ func (r *CampaignRepository) Approve(ctx context.Context, id int64) error {
 	}
 	return tx.Commit()
 }
+
+// Dispatch lease (dispatch.CampaignStore). Lease times are stored as Unix
+// milliseconds so short test TTLs work and comparisons are numeric.
+
+// ErrLeaseHeld and ErrLeaseLost are the domain sentinels.
+var (
+	ErrLeaseHeld = domain.ErrLeaseHeld
+	ErrLeaseLost = domain.ErrLeaseLost
+)
+
+// AcquireDispatch makes owner the only dispatcher of campaign id until
+// `until`, in one compare-and-set UPDATE:
+//
+//   - from approved (Start): approved → sending, owner set;
+//   - from sending (Resume): owner set if the campaign has no owner, is
+//     already owned by owner, or its lease expired before now.
+//
+// It returns ErrNotFound, ErrStatusConflict (the campaign is not in status
+// from) or ErrLeaseHeld (another owner's lease is still live).
+func (r *CampaignRepository) AcquireDispatch(ctx context.Context, id int64, from domain.CampaignStatus, owner string, now, until time.Time) error {
+	var (
+		res sql.Result
+		err error
+	)
+	switch from {
+	case domain.CampaignStatusApproved:
+		res, err = r.db.ExecContext(ctx, `UPDATE campaigns
+			SET status = 'sending', dispatch_owner = ?, dispatch_lease_until = ?
+			WHERE id = ? AND status = 'approved'`,
+			owner, until.UnixMilli(), id)
+	case domain.CampaignStatusSending:
+		res, err = r.db.ExecContext(ctx, `UPDATE campaigns
+			SET dispatch_owner = ?, dispatch_lease_until = ?
+			WHERE id = ? AND status = 'sending'
+			  AND (dispatch_owner IS NULL OR dispatch_owner = ?
+			       OR dispatch_lease_until IS NULL OR dispatch_lease_until < ?)`,
+			owner, until.UnixMilli(), id, owner, now.UnixMilli())
+	default:
+		return fmt.Errorf("campaign %d: dispatch cannot be acquired from status %s", id, from)
+	}
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 1 {
+		return err
+	}
+	c, err := r.GetByID(ctx, id)
+	if err != nil {
+		return err // ErrNotFound
+	}
+	if c.Status != from {
+		return ErrStatusConflict
+	}
+	return ErrLeaseHeld
+}
+
+// RenewDispatch extends owner's lease. ErrLeaseLost means another
+// dispatcher took the run over (or it was released): the caller must stop.
+func (r *CampaignRepository) RenewDispatch(ctx context.Context, id int64, owner string, until time.Time) error {
+	res, err := r.db.ExecContext(ctx, `UPDATE campaigns SET dispatch_lease_until = ?
+		WHERE id = ? AND status = 'sending' AND dispatch_owner = ?`, until.UnixMilli(), id, owner)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 1 {
+		return err
+	}
+	return ErrLeaseLost
+}
+
+// ReleaseDispatch ends owner's run: status sending → to (sending itself for
+// a run that stopped and can be resumed, completed or failed otherwise) and
+// the lease is cleared. ErrLeaseLost if owner no longer owns the run.
+func (r *CampaignRepository) ReleaseDispatch(ctx context.Context, id int64, owner string, to domain.CampaignStatus) error {
+	if to != domain.CampaignStatusSending && !domain.CampaignStatusSending.CanTransitionTo(to) {
+		return fmt.Errorf("campaign %d: transition sending -> %s is not allowed", id, to)
+	}
+	res, err := r.db.ExecContext(ctx, `UPDATE campaigns
+		SET status = ?, dispatch_owner = NULL, dispatch_lease_until = NULL
+		WHERE id = ? AND status = 'sending' AND dispatch_owner = ?`, string(to), id, owner)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 1 {
+		return err
+	}
+	return ErrLeaseLost
+}
+
+// DispatchLease returns the current lease of a campaign (owner "" if none).
+func (r *CampaignRepository) DispatchLease(ctx context.Context, id int64) (owner string, until time.Time, err error) {
+	var (
+		o sql.NullString
+		u sql.NullInt64
+	)
+	err = r.db.QueryRowContext(ctx, "SELECT dispatch_owner, dispatch_lease_until FROM campaigns WHERE id = ?", id).Scan(&o, &u)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", time.Time{}, ErrNotFound
+	}
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if u.Valid {
+		until = time.UnixMilli(u.Int64).UTC()
+	}
+	return o.String, until, nil
+}

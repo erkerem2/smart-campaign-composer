@@ -20,7 +20,7 @@ POST /{id}/dispatch ─► 202 ─► GET /{id}/dispatch/stream ─► SSE stats
 | `POST /api/campaigns/compose/stream` | `{"brief"}` | `200 text/event-stream` | `400 invalid_brief` (before the stream) |
 | `POST /api/campaigns` | `{"brief", "segment_rule", "messages": {sms_content, email_subject, email_body}}` | `201` + `Location`, `{campaign, messages, report, audience}` | `400 missing_rule\|missing_messages\|invalid_brief`, `422 invalid_rule\|invalid_content (+issues)\|empty_audience` |
 | `GET /api/campaigns/{id}` | – | `200` `{campaign, messages, dispatch}` | `400 invalid_id`, `404 campaign_not_found` |
-| `POST /api/campaigns/{id}/dispatch` | `{}` | `202` `{campaign_id, state, resumed, audience_size, stats_url, stream_url}` | `409 already_running\|invalid_state\|missing_rule\|invalid_rule`, `404` |
+| `POST /api/campaigns/{id}/dispatch` | `{}` or empty, `Content-Type: application/json` required (CSRF) | `202` `{campaign_id, state, resumed, audience_size, stats_url, stream_url}` | `409 already_running\|invalid_state\|missing_rule\|invalid_rule`, `404`, `415 unsupported_media_type`, `403 origin_not_allowed` |
 | `GET /api/campaigns/{id}/dispatch` | – | `200` stats snapshot | `404` |
 | `GET /api/campaigns/{id}/dispatch/stream` | – | `200 text/event-stream` | `404` |
 

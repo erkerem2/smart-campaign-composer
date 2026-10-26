@@ -64,7 +64,9 @@ func Open(ctx context.Context, path string) (*sql.DB, error) {
 //	   created_at/updated_at (ADR 007)
 //	3  v_users_segment view with the derived segment attributes, and
 //	   campaigns.segment_rule for the approved rule (ADR 008)
-const SchemaVersion = 3
+//	4  campaigns.dispatch_owner / dispatch_lease_until: the dispatch lease
+//	   that gives a campaign's run exactly one owner across processes
+const SchemaVersion = 4
 
 // SegmentView is the view the segment engine queries (see schema.sql). It
 // must match segment.DefaultRegistry.Table; a repository test enforces it.
@@ -97,6 +99,11 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	if version < 3 {
 		if err := addCampaignSegmentRule(ctx, tx); err != nil {
 			return fmt.Errorf("migrate v3: %w", err)
+		}
+	}
+	if version < 4 {
+		if err := addCampaignDispatchLease(ctx, tx); err != nil {
+			return fmt.Errorf("migrate v4: %w", err)
 		}
 	}
 	// schema.sql also drops and recreates v_users_segment, so the view
@@ -170,6 +177,37 @@ func addCampaignSegmentRule(ctx context.Context, tx *sql.Tx) error {
 	_, err := tx.ExecContext(ctx, `ALTER TABLE campaigns ADD COLUMN segment_rule TEXT
 		CHECK (segment_rule IS NULL OR json_valid(segment_rule))`)
 	return err
+}
+
+// addCampaignDispatchLease adds the dispatch lease columns to a pre-v4
+// database (nullable columns: in-place ALTERs, no table rebuild). A fresh
+// database gets them from schema.sql.
+func addCampaignDispatchLease(ctx context.Context, tx *sql.Tx) error {
+	var tables int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'campaigns'").Scan(&tables); err != nil {
+		return err
+	}
+	if tables == 0 {
+		return nil // fresh database
+	}
+	for _, col := range []struct{ name, ddl string }{
+		{"dispatch_owner", "ALTER TABLE campaigns ADD COLUMN dispatch_owner TEXT"},
+		{"dispatch_lease_until", "ALTER TABLE campaigns ADD COLUMN dispatch_lease_until INTEGER"},
+	} {
+		var n int
+		if err := tx.QueryRowContext(ctx,
+			"SELECT count(*) FROM pragma_table_info('campaigns') WHERE name = ?", col.name).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, col.ddl); err != nil {
+			return fmt.Errorf("%s: %w", col.ddl, err)
+		}
+	}
+	return nil
 }
 
 func copyLegacyDispatchLogs(ctx context.Context, tx *sql.Tx) error {

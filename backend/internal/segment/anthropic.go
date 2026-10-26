@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"smart-campaign-composer/backend/internal/fence"
 )
 
 // AnthropicClient implements LLMClient with the Claude Messages API using a
@@ -92,8 +94,9 @@ func (c *AnthropicClient) GenerateRule(ctx context.Context, req RuleRequest) (js
 		Model:     model,
 		MaxTokens: maxTok,
 		System:    req.SystemPrompt,
-		// The brief is fenced so the model treats it as data (see prompt).
-		Messages: []anthropicMessage{{Role: "user", Content: "<brief>\n" + req.Brief + "\n</brief>"}},
+		// The brief is fenced so the model treats it as data (see prompt);
+		// fence.Wrap escapes any fence tag inside it, so it cannot break out.
+		Messages: []anthropicMessage{{Role: "user", Content: fence.Wrap("brief", req.Brief)}},
 		Tools: []anthropicTool{{
 			Name:        req.ToolName,
 			Description: "Kampanya brief'ini doğrulanacak bir kitle kural ağacı olarak döndürür.",

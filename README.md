@@ -166,7 +166,7 @@ Claude never writes SQL. It is forced to call a tool whose input is a **rule tre
 
 ### 2. Channel limits and content validation (ADR 006)
 
-- SMS ≤ **160** and e-mail subject ≤ **80** Unicode code points, checked on the template *and* on an estimated rendered length (`{{first_name}}` ≈ 10), and once more on the real text per recipient.
+- SMS ≤ **160** and e-mail subject ≤ **80** Unicode code points, checked on the template *and* on an estimated rendered length (`{{first_name}}` budgeted at 18, the width of its fallback "Değerli müşterimiz"), and once more on the real text per recipient.
 - Only whitelisted variables (`{{first_name}}`, `{{last_name}}`); single-line subjects (header injection); control and bidi-override characters rejected; the e-mail body is Markdown or a small whitelisted HTML subset.
 - An invalid draft is sent back to Claude **once** with the issues; if it still fails, the marketer fixes it — no unbounded loops.
 - The UI counters mirror the server's counting rules exactly, but approval is always re-validated by the API.
@@ -182,7 +182,7 @@ Claude never writes SQL. It is forced to call a tool whose input is a **rule tre
 - **Database-level idempotency:** `dispatch_logs` has `UNIQUE(campaign_id, user_id, channel)`. Before any provider call a `pending` row is *claimed* with `INSERT … ON CONFLICT DO NOTHING`; only the caller whose insert created the row may send. Final states are written with `UPDATE … WHERE status = 'pending'`, so they are never overwritten.
 - **Provider-level idempotency:** every attempt carries `Idempotency-Key: campaign_id:user_id:channel`. If the outcome of an attempt is unknown (timeout after the provider accepted, crash), the retry or a later resume gets the original result back instead of a second message.
 - **Two-phase opt-in check:** the loaded user must have the channel's opt-in (`User.CanReceive`), and the claim SQL itself repeats `AND opt_in_<channel> = 1`, so a user who opts out between audience resolution and sending is not claimed. On resume, pending rows of users who opted out meanwhile are closed as `failed`, never sent.
-- A campaign starts with a compare-and-set (`approved → sending`), so two clicks or two processes cannot both send it. A restart leaves it `sending`; calling dispatch again **resumes** with the same keys.
+- A campaign starts with a compare-and-set (`approved → sending`) that also takes a **dispatch lease** (owner + expiry, renewed by a heartbeat), so two clicks or two processes cannot both send it. A restart leaves it `sending`; calling dispatch again **resumes** with the same keys — once the previous owner's lease is released or expired, and only in one place at a time.
 
 ### 5. Operability
 

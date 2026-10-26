@@ -13,7 +13,7 @@ import (
 // ErrDispatchNotPending is returned when a delivery is finalised that is not
 // in the pending state (already finalised, or never claimed). A final state is
 // never overwritten.
-var ErrDispatchNotPending = errors.New("dispatch log is not pending")
+var ErrDispatchNotPending = domain.ErrDispatchNotPending
 
 // optInColumns maps a channel to its opt-in column. Column names only ever
 // come from this map, never from input.

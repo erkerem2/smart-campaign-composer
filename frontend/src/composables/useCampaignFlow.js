@@ -2,7 +2,7 @@ import { ref, reactive, computed } from 'vue'
 import { api, ApiError } from '../api/client.js'
 import { useComposeStream, FIELDS } from './useComposeStream.js'
 import { useDispatchStream } from './useDispatchStream.js'
-import { measure, normalize, LIMITS } from '../lib/text.js'
+import { measure, normalize, runeLength, cleanBrief, fieldIssues, LIMITS } from '../lib/text.js'
 
 /** The reference brief from CASE_SPEC.md ("Örnek brief"). */
 export const SAMPLE_BRIEF =
@@ -55,7 +55,8 @@ export function useCampaignFlow({ client = api, compose: composeOpts, dispatch: 
   const dispatching = ref(false)
   const live = useDispatchStream({ fetchStats: client.dispatchStats, ...dispatchOpts })
 
-  const trimmedBrief = computed(() => brief.value.trim())
+  // Cleaned like the server cleans it (textguard.CleanBrief).
+  const trimmedBrief = computed(() => cleanBrief(brief.value))
   const briefDirty = computed(() => !preview.value || trimmedBrief.value !== preview.value.brief)
   const locked = computed(() => campaign.value !== null)
 
@@ -78,37 +79,67 @@ export function useCampaignFlow({ client = api, compose: composeOpts, dispatch: 
   }
 
   // ── Step 1 → 2 ────────────────────────────────────────────────────────
-  async function runPreview() {
-    const b = trimmedBrief.value
-    if (!b || b.length > MAX_BRIEF || locked.value) return
+  // Only the latest preview request may change the state: a newer one aborts
+  // the older (its answer or error is dropped even if it still arrives),
+  // so a slow first request can never overwrite the audience of the brief
+  // the marketer is looking at.
+  let previewSeq = 0
+  let previewAbort = null
+
+  function beginPreview() {
+    previewAbort?.abort()
+    previewAbort = new AbortController()
     previewing.value = true
     previewError.value = null
+    return { id: ++previewSeq, signal: previewAbort.signal }
+  }
+
+  const isCurrent = (req) => req.id === previewSeq
+
+  function endPreview(req) {
+    if (!isCurrent(req)) return
+    previewing.value = false
+    previewAbort = null
+  }
+
+  async function runPreview() {
+    const b = trimmedBrief.value
+    if (!b || locked.value) return
+    // Characters as the server counts them (code points), not UTF-16 units:
+    // an emoji is one character here, like on the brief step's counter.
+    if (runeLength(b) > MAX_BRIEF) {
+      previewError.value = new ApiError({ code: 'invalid_brief', message: `brief exceeds ${MAX_BRIEF} characters` })
+      return
+    }
+    const req = beginPreview()
     try {
-      const p = await client.previewSegment({ brief: b })
+      const p = await client.previewSegment({ brief: b }, { signal: req.signal })
+      if (!isCurrent(req)) return
       preview.value = { ...p, brief: b }
       if (composedFor.value !== b) resetContent()
       step.value = 2
     } catch (err) {
-      previewError.value = toError(err)
+      if (isCurrent(req) && err?.name !== 'AbortError') previewError.value = toError(err)
     } finally {
-      previewing.value = false
+      endPreview(req)
     }
   }
 
   /** Re-validates a rule edited as JSON in the audience card (no LLM call). */
   async function revalidateRule(rule) {
     if (!preview.value || locked.value) return false
-    previewing.value = true
-    previewError.value = null
+    const brief = preview.value.brief
+    const req = beginPreview()
     try {
-      const p = await client.previewSegment({ brief: preview.value.brief, rule })
-      preview.value = { ...p, brief: preview.value.brief }
+      const p = await client.previewSegment({ brief, rule }, { signal: req.signal })
+      if (!isCurrent(req)) return false
+      preview.value = { ...p, brief }
       return true
     } catch (err) {
-      previewError.value = toError(err)
+      if (isCurrent(req) && err?.name !== 'AbortError') previewError.value = toError(err)
       return false
     } finally {
-      previewing.value = false
+      endPreview(req)
     }
   }
 
@@ -145,20 +176,9 @@ export function useCampaignFlow({ client = api, compose: composeOpts, dispatch: 
     email_body: measure(edits.email_body, 0),
   }))
 
-  const clientIssues = computed(() => {
-    const out = []
-    for (const f of FIELDS) {
-      const c = checks.value[f]
-      if (c.empty) out.push({ field: f, code: 'empty', message: 'Boş bırakılamaz.' })
-      if (c.over) out.push({ field: f, code: 'too_long', message: `En fazla ${c.limit} karakter.` })
-      for (const u of c.unknown) out.push({ field: f, code: 'unknown_variable', message: `{{${u}}} desteklenmiyor.` })
-      for (const m of c.malformed) out.push({ field: f, code: 'malformed_placeholder', message: m })
-      if (f === 'email_subject' && /\n/.test(normalize(edits[f]))) {
-        out.push({ field: f, code: 'forbidden_character', message: 'Konu tek satır olmalı.' })
-      }
-    }
-    return out
-  })
+  // The server's rules, field by field (lib/text.js fieldIssues mirrors the
+  // composer validator; shared vectors keep them identical).
+  const clientIssues = computed(() => FIELDS.flatMap((f) => fieldIssues(f, edits[f])))
 
   const canApprove = computed(
     () => !locked.value && !!preview.value && !briefDirty.value && clientIssues.value.length === 0 && !approving.value,

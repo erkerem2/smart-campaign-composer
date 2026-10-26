@@ -1,0 +1,727 @@
+[
+ {
+  "name": "plain with variable",
+  "field": "sms_content",
+  "input": "Merhaba {{first_name}}, %30 indirim!",
+  "normalized": "Merhaba {{first_name}}, %30 indirim!",
+  "runes": 36,
+  "estimated": 40,
+  "codes": []
+ },
+ {
+  "name": "160 ascii",
+  "field": "sms_content",
+  "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "runes": 160,
+  "estimated": 160,
+  "codes": []
+ },
+ {
+  "name": "161 ascii",
+  "field": "sms_content",
+  "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "runes": 161,
+  "estimated": 161,
+  "codes": [
+   "too_long"
+  ]
+ },
+ {
+  "name": "160 turkish",
+  "field": "sms_content",
+  "input": "şşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşş",
+  "normalized": "şşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşş",
+  "runes": 160,
+  "estimated": 160,
+  "codes": []
+ },
+ {
+  "name": "161 turkish",
+  "field": "sms_content",
+  "input": "ğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğ",
+  "normalized": "ğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğğ",
+  "runes": 161,
+  "estimated": 161,
+  "codes": [
+   "too_long"
+  ]
+ },
+ {
+  "name": "variable budget 160",
+  "field": "sms_content",
+  "input": "{{first_name}}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "normalized": "{{first_name}}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "runes": 156,
+  "estimated": 160,
+  "codes": []
+ },
+ {
+  "name": "variable budget 161",
+  "field": "sms_content",
+  "input": "{{first_name}}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "normalized": "{{first_name}}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "runes": 157,
+  "estimated": 161,
+  "codes": [
+   "estimated_too_long"
+  ]
+ },
+ {
+  "name": "raw 161 with variable",
+  "field": "sms_content",
+  "input": "{{first_name}}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "normalized": "{{first_name}}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "runes": 161,
+  "estimated": 165,
+  "codes": [
+   "too_long"
+  ]
+ },
+ {
+  "name": "emoji 160",
+  "field": "sms_content",
+  "input": "🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉",
+  "normalized": "🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉",
+  "runes": 160,
+  "estimated": 160,
+  "codes": []
+ },
+ {
+  "name": "emoji 161",
+  "field": "sms_content",
+  "input": "🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉",
+  "normalized": "🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉🎉",
+  "runes": 161,
+  "estimated": 161,
+  "codes": [
+   "too_long"
+  ]
+ },
+ {
+  "name": "ZWJ families 160",
+  "field": "sms_content",
+  "input": "👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧",
+  "normalized": "👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧",
+  "runes": 160,
+  "estimated": 160,
+  "codes": []
+ },
+ {
+  "name": "ZWJ families 161",
+  "field": "sms_content",
+  "input": "👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧a",
+  "normalized": "👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧👨‍👩‍👧a",
+  "runes": 161,
+  "estimated": 161,
+  "codes": [
+   "too_long"
+  ]
+ },
+ {
+  "name": "flags 162",
+  "field": "sms_content",
+  "input": "🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷",
+  "normalized": "🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷",
+  "runes": 162,
+  "estimated": 162,
+  "codes": [
+   "too_long"
+  ]
+ },
+ {
+  "name": "newline allowed in sms",
+  "field": "sms_content",
+  "input": "Satır 1\nSatır 2",
+  "normalized": "Satır 1\nSatır 2",
+  "runes": 15,
+  "estimated": 15,
+  "codes": []
+ },
+ {
+  "name": "CRLF normalised",
+  "field": "sms_content",
+  "input": "Satır 1\r\nSatır 2\r",
+  "normalized": "Satır 1\nSatır 2",
+  "runes": 15,
+  "estimated": 15,
+  "codes": []
+ },
+ {
+  "name": "tab in sms",
+  "field": "sms_content",
+  "input": "a\tb",
+  "normalized": "a\tb",
+  "runes": 3,
+  "estimated": 3,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "BEL in sms",
+  "field": "sms_content",
+  "input": "a\u0007b",
+  "normalized": "a\u0007b",
+  "runes": 3,
+  "estimated": 3,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "NUL in sms",
+  "field": "sms_content",
+  "input": "a\u0000b",
+  "normalized": "a\u0000b",
+  "runes": 3,
+  "estimated": 3,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "DEL in sms",
+  "field": "sms_content",
+  "input": "a",
+  "normalized": "a",
+  "runes": 2,
+  "estimated": 2,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "C1 control in sms",
+  "field": "sms_content",
+  "input": "ab",
+  "normalized": "ab",
+  "runes": 3,
+  "estimated": 3,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "line separator in sms",
+  "field": "sms_content",
+  "input": "a\u2028b",
+  "normalized": "a\u2028b",
+  "runes": 3,
+  "estimated": 3,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "paragraph separator in sms",
+  "field": "sms_content",
+  "input": "a\u2029b",
+  "normalized": "a\u2029b",
+  "runes": 3,
+  "estimated": 3,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "RLO in sms",
+  "field": "sms_content",
+  "input": "‮abc",
+  "normalized": "‮abc",
+  "runes": 4,
+  "estimated": 4,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "LRM in sms",
+  "field": "sms_content",
+  "input": "a‎b",
+  "normalized": "a‎b",
+  "runes": 3,
+  "estimated": 3,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "isolate in sms",
+  "field": "sms_content",
+  "input": "a⁦b⁩",
+  "normalized": "a⁦b⁩",
+  "runes": 4,
+  "estimated": 4,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "ZWSP in sms",
+  "field": "sms_content",
+  "input": "in​dirim",
+  "normalized": "in​dirim",
+  "runes": 8,
+  "estimated": 8,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "soft hyphen in sms",
+  "field": "sms_content",
+  "input": "in­dirim",
+  "normalized": "in­dirim",
+  "runes": 8,
+  "estimated": 8,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "word joiner in sms",
+  "field": "sms_content",
+  "input": "a⁠",
+  "normalized": "a⁠",
+  "runes": 2,
+  "estimated": 2,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "BOM inside sms",
+  "field": "sms_content",
+  "input": "a﻿b",
+  "normalized": "a﻿b",
+  "runes": 3,
+  "estimated": 3,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "BOM at start (not trimmed by Go)",
+  "field": "sms_content",
+  "input": "﻿Merhaba",
+  "normalized": "﻿Merhaba",
+  "runes": 8,
+  "estimated": 8,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "tag characters",
+  "field": "sms_content",
+  "input": "Merhaba󠁉󠁇",
+  "normalized": "Merhaba󠁉󠁇",
+  "runes": 9,
+  "estimated": 9,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "ZWNJ allowed",
+  "field": "sms_content",
+  "input": "a‌b",
+  "normalized": "a‌b",
+  "runes": 3,
+  "estimated": 3,
+  "codes": []
+ },
+ {
+  "name": "heart with VS16",
+  "field": "sms_content",
+  "input": "❤️ indirim",
+  "normalized": "❤️ indirim",
+  "runes": 10,
+  "estimated": 10,
+  "codes": []
+ },
+ {
+  "name": "surrounding spaces",
+  "field": "sms_content",
+  "input": "   Merhaba   ",
+  "normalized": "Merhaba",
+  "runes": 7,
+  "estimated": 7,
+  "codes": []
+ },
+ {
+  "name": "NEL trimmed like Go",
+  "field": "sms_content",
+  "input": "Merhaba",
+  "normalized": "Merhaba",
+  "runes": 7,
+  "estimated": 7,
+  "codes": []
+ },
+ {
+  "name": "NBSP trimmed",
+  "field": "sms_content",
+  "input": " Merhaba ",
+  "normalized": "Merhaba",
+  "runes": 7,
+  "estimated": 7,
+  "codes": []
+ },
+ {
+  "name": "ideographic space trimmed",
+  "field": "sms_content",
+  "input": "　Merhaba",
+  "normalized": "Merhaba",
+  "runes": 7,
+  "estimated": 7,
+  "codes": []
+ },
+ {
+  "name": "empty",
+  "field": "sms_content",
+  "input": "",
+  "normalized": "",
+  "runes": 0,
+  "estimated": 0,
+  "codes": [
+   "empty"
+  ]
+ },
+ {
+  "name": "spaces only",
+  "field": "sms_content",
+  "input": "   \n\t ",
+  "normalized": "",
+  "runes": 0,
+  "estimated": 0,
+  "codes": [
+   "empty"
+  ]
+ },
+ {
+  "name": "NBSP only",
+  "field": "sms_content",
+  "input": " ",
+  "normalized": "",
+  "runes": 0,
+  "estimated": 0,
+  "codes": [
+   "empty"
+  ]
+ },
+ {
+  "name": "ideographic space only",
+  "field": "sms_content",
+  "input": "　",
+  "normalized": "",
+  "runes": 0,
+  "estimated": 0,
+  "codes": [
+   "empty"
+  ]
+ },
+ {
+  "name": "BOM only",
+  "field": "sms_content",
+  "input": "﻿",
+  "normalized": "﻿",
+  "runes": 1,
+  "estimated": 1,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "ZWSP only",
+  "field": "sms_content",
+  "input": "​",
+  "normalized": "​",
+  "runes": 1,
+  "estimated": 1,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "unknown variable",
+  "field": "sms_content",
+  "input": "Kart {{credit_card}}",
+  "normalized": "Kart {{credit_card}}",
+  "runes": 20,
+  "estimated": 20,
+  "codes": [
+   "unknown_variable"
+  ]
+ },
+ {
+  "name": "two unknown",
+  "field": "sms_content",
+  "input": "{{email}} {{phone}} {{email}}",
+  "normalized": "{{email}} {{phone}} {{email}}",
+  "runes": 29,
+  "estimated": 29,
+  "codes": [
+   "unknown_variable"
+  ]
+ },
+ {
+  "name": "unclosed placeholder",
+  "field": "sms_content",
+  "input": "Merhaba {{first_name",
+  "normalized": "Merhaba {{first_name",
+  "runes": 20,
+  "estimated": 20,
+  "codes": [
+   "malformed_placeholder"
+  ]
+ },
+ {
+  "name": "triple braces",
+  "field": "sms_content",
+  "input": "Merhaba {{{first_name}}}",
+  "normalized": "Merhaba {{{first_name}}}",
+  "runes": 24,
+  "estimated": 24,
+  "codes": [
+   "malformed_placeholder"
+  ]
+ },
+ {
+  "name": "spaced placeholder ok",
+  "field": "sms_content",
+  "input": "Merhaba {{ first_name }}",
+  "normalized": "Merhaba {{ first_name }}",
+  "runes": 24,
+  "estimated": 26,
+  "codes": []
+ },
+ {
+  "name": "uppercase placeholder",
+  "field": "sms_content",
+  "input": "{{First_Name}}",
+  "normalized": "{{First_Name}}",
+  "runes": 14,
+  "estimated": 14,
+  "codes": [
+   "malformed_placeholder"
+  ]
+ },
+ {
+  "name": "unknown + too long",
+  "field": "sms_content",
+  "input": "{{credit_card}}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "normalized": "{{credit_card}}aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "runes": 165,
+  "estimated": 165,
+  "codes": [
+   "too_long",
+   "unknown_variable"
+  ]
+ },
+ {
+  "name": "subject 80 ascii",
+  "field": "email_subject",
+  "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "runes": 80,
+  "estimated": 80,
+  "codes": []
+ },
+ {
+  "name": "subject 81",
+  "field": "email_subject",
+  "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "runes": 81,
+  "estimated": 81,
+  "codes": [
+   "too_long"
+  ]
+ },
+ {
+  "name": "subject 80 turkish",
+  "field": "email_subject",
+  "input": "üüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüü",
+  "normalized": "üüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüü",
+  "runes": 80,
+  "estimated": 80,
+  "codes": []
+ },
+ {
+  "name": "subject variable budget 80",
+  "field": "email_subject",
+  "input": "{{first_name}}bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "normalized": "{{first_name}}bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "runes": 76,
+  "estimated": 80,
+  "codes": []
+ },
+ {
+  "name": "subject variable budget 81",
+  "field": "email_subject",
+  "input": "{{first_name}}bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "normalized": "{{first_name}}bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "runes": 77,
+  "estimated": 81,
+  "codes": [
+   "estimated_too_long"
+  ]
+ },
+ {
+  "name": "subject newline",
+  "field": "email_subject",
+  "input": "Konu\nBcc: x@example.com",
+  "normalized": "Konu\nBcc: x@example.com",
+  "runes": 23,
+  "estimated": 23,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "subject CR",
+  "field": "email_subject",
+  "input": "Konu\rx",
+  "normalized": "Konu\nx",
+  "runes": 6,
+  "estimated": 6,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "subject tab",
+  "field": "email_subject",
+  "input": "Konu\tx",
+  "normalized": "Konu\tx",
+  "runes": 6,
+  "estimated": 6,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "subject line separator",
+  "field": "email_subject",
+  "input": "Konu\u2028x",
+  "normalized": "Konu\u2028x",
+  "runes": 6,
+  "estimated": 6,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "subject trailing newline trimmed",
+  "field": "email_subject",
+  "input": "Konu\n",
+  "normalized": "Konu",
+  "runes": 4,
+  "estimated": 4,
+  "codes": []
+ },
+ {
+  "name": "subject flags 80",
+  "field": "email_subject",
+  "input": "🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷",
+  "normalized": "🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷",
+  "runes": 80,
+  "estimated": 80,
+  "codes": []
+ },
+ {
+  "name": "subject flags 81",
+  "field": "email_subject",
+  "input": "🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷a",
+  "normalized": "🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷🇹🇷a",
+  "runes": 81,
+  "estimated": 81,
+  "codes": [
+   "too_long"
+  ]
+ },
+ {
+  "name": "body newline and tab",
+  "field": "email_body",
+  "input": "Satır\n\tgirintili",
+  "normalized": "Satır\n\tgirintili",
+  "runes": 16,
+  "estimated": 16,
+  "codes": []
+ },
+ {
+  "name": "body CR normalised",
+  "field": "email_body",
+  "input": "a\r\nb",
+  "normalized": "a\nb",
+  "runes": 3,
+  "estimated": 3,
+  "codes": []
+ },
+ {
+  "name": "body line separator",
+  "field": "email_body",
+  "input": "a\u2028b",
+  "normalized": "a\u2028b",
+  "runes": 3,
+  "estimated": 3,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "body ZWSP",
+  "field": "email_body",
+  "input": "a​b",
+  "normalized": "a​b",
+  "runes": 3,
+  "estimated": 3,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "body unknown variable",
+  "field": "email_body",
+  "input": "Gövde {{email}}",
+  "normalized": "Gövde {{email}}",
+  "runes": 15,
+  "estimated": 15,
+  "codes": [
+   "unknown_variable"
+  ]
+ },
+ {
+  "name": "body empty",
+  "field": "email_body",
+  "input": "\n\n",
+  "normalized": "",
+  "runes": 0,
+  "estimated": 0,
+  "codes": [
+   "empty"
+  ]
+ },
+ {
+  "name": "body BEL",
+  "field": "email_body",
+  "input": "a\u0007",
+  "normalized": "a\u0007",
+  "runes": 2,
+  "estimated": 2,
+  "codes": [
+   "forbidden_character"
+  ]
+ },
+ {
+  "name": "body variable estimate",
+  "field": "email_body",
+  "input": "Merhaba {{first_name}}, {{last_name}}",
+  "normalized": "Merhaba {{first_name}}, {{last_name}}",
+  "runes": 37,
+  "estimated": 38,
+  "codes": []
+ }
+]

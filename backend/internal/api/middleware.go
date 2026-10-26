@@ -54,6 +54,10 @@ const (
 // origins. The allowed origin is echoed (not "*") with Vary: Origin, so
 // caches never serve one origin's response to another. Credentials are not
 // used: the API has no cookies.
+//
+// It is also the CSRF guard: a browser request that carries an Origin which
+// is not allowed is refused with 403 unless its method is safe (GET, HEAD,
+// OPTIONS). Requests without an Origin (curl, server-to-server) pass.
 func cors(cfg CORSConfig, next http.Handler) http.Handler {
 	maxAge := cfg.MaxAge
 	if maxAge <= 0 {
@@ -72,12 +76,16 @@ func cors(cfg CORSConfig, next http.Handler) http.Handler {
 		h.Add("Vary", "Origin")
 		preflight := r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != ""
 		if !allowed(origin) {
-			if preflight {
+			if preflight || !safeMethod(r.Method) {
+				// A state-changing request from a page on another origin
+				// (CSRF) is refused before it reaches a handler: CORS alone
+				// only hides the response, the side effect would happen.
 				writeError(w, &apiError{Status: http.StatusForbidden, Code: "origin_not_allowed",
 					Message: "origin " + origin + " is not allowed"})
 				return
 			}
-			// No CORS headers: the browser hides the response from the page.
+			// A read: no CORS headers, so the browser hides the response
+			// from the page.
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -94,6 +102,11 @@ func cors(cfg CORSConfig, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// safeMethod reports methods that must not change server state (RFC 9110).
+func safeMethod(m string) bool {
+	return m == http.MethodGet || m == http.MethodHead || m == http.MethodOptions
 }
 
 // statusWriter records the status code for logging. It keeps streaming

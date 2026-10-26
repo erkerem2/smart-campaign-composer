@@ -33,31 +33,39 @@ const pad = { top: 14, right: 64, bottom: 26, left: 36 }
 const innerW = computed(() => Math.max(10, width.value - pad.left - pad.right))
 const innerH = computed(() => props.height - pad.top - pad.bottom)
 
-const tMax = computed(() => Math.max(10, ...props.samples.map((s) => s.t)))
+// Samples come from the network: a missing or non-numeric value is drawn as
+// 0 rather than poisoning every coordinate with NaN.
+const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
+const points = computed(() => props.samples.map((s) => ({ t: num(s.t), sms: num(s.sms), email: num(s.email) })))
+
+const tMax = computed(() => Math.max(10, ...points.value.map((s) => s.t)))
 const yMax = computed(() => {
-  const peak = Math.max(0, ...props.samples.flatMap((s) => [s.sms, s.email]))
+  const peak = Math.max(0, ...points.value.flatMap((s) => [s.sms, s.email]))
   return Math.max(props.limit * 1.2, Math.ceil((peak * 1.1) / 20) * 20)
 })
 const x = (t) => pad.left + (t / tMax.value) * innerW.value
 const y = (v) => pad.top + innerH.value - (v / yMax.value) * innerH.value
 
-const yTicks = computed(() => {
-  const step = yMax.value > 150 ? 50 : 25
+// niceStep picks 1, 2, 2.5 or 5 × 10^n so that at most ~maxTicks ticks fit:
+// a fixed step would draw thousands of grid lines for an outlier sample.
+function niceStep(max, maxTicks, min) {
+  const raw = Math.max(min, max / maxTicks)
+  const mag = 10 ** Math.floor(Math.log10(raw))
+  for (const m of [1, 2, 2.5, 5, 10]) if (m * mag >= raw) return m * mag
+  return 10 * mag
+}
+function ticks(max, step) {
   const out = []
-  for (let v = 0; v <= yMax.value; v += step) out.push(v)
+  for (let v = 0; v <= max + 1e-9; v += step) out.push(Number(v.toFixed(6)))
   return out
-})
-const xTicks = computed(() => {
-  const step = tMax.value > 120 ? 30 : tMax.value > 40 ? 10 : 5
-  const out = []
-  for (let t = 0; t <= tMax.value; t += step) out.push(t)
-  return out
-})
+}
+const yTicks = computed(() => ticks(yMax.value, niceStep(yMax.value, 6, 25)))
+const xTicks = computed(() => ticks(tMax.value, niceStep(tMax.value, 8, 5)))
 
 const lines = computed(() =>
   SERIES.map((s) => {
-    const pts = props.samples.map((p) => `${x(p.t).toFixed(1)},${y(p[s.key]).toFixed(1)}`)
-    const last = props.samples.at(-1)
+    const pts = points.value.map((p) => `${x(p.t).toFixed(1)},${y(p[s.key]).toFixed(1)}`)
+    const last = points.value.at(-1)
     return { ...s, d: pts.length ? 'M' + pts.join('L') : '', last: last ? { x: x(last.t), y: y(last[s.key]), v: last[s.key] } : null }
   }),
 )
@@ -76,12 +84,12 @@ const endLabels = computed(() => {
 
 const hover = ref(null)
 function onMove(e) {
-  if (!props.samples.length) return
+  if (!points.value.length) return
   const rect = e.currentTarget.getBoundingClientRect()
   const px = ((e.clientX - rect.left) / rect.width) * width.value
   const t = ((px - pad.left) / innerW.value) * tMax.value
-  let best = props.samples[0]
-  for (const s of props.samples) if (Math.abs(s.t - t) < Math.abs(best.t - t)) best = s
+  let best = points.value[0]
+  for (const s of points.value) if (Math.abs(s.t - t) < Math.abs(best.t - t)) best = s
   hover.value = best
 }
 </script>
