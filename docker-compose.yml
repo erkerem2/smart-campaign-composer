@@ -1,0 +1,122 @@
+# Smart Campaign Composer - one-command setup (ADR 011).
+#
+#   docker compose up --build        # build + start everything
+#   open http://localhost:3000
+#
+# Start-up order (each step waits for the previous one):
+#
+#   mock-provider (healthy) ──┐
+#   seed (exits 0)  ──────────┼──> backend (healthy) ──> frontend
+#
+# Without ANTHROPIC_API_KEY (see .env.example) the API runs the deterministic
+# mock LLM, so the whole flow works offline and at zero cost.
+#
+# Ports are published on 127.0.0.1 only: nothing is reachable from the network.
+
+name: smart-campaign-composer
+
+x-backend-build: &backend-build
+  context: ./backend
+  dockerfile: Dockerfile
+
+x-healthcheck-timing: &healthcheck-timing
+  interval: 5s
+  timeout: 3s
+  retries: 12
+  start_period: 5s
+
+services:
+  # Mock SMS / e-mail gateway: ~10% 429 (Retry-After: 1), ~5% 500,
+  # 10-30 ms latency, Idempotency-Key enforcement. Sends nothing to anyone.
+  mock-provider:
+    build:
+      <<: *backend-build
+      target: mock-provider
+    image: smart-campaign-composer/mock-provider:local
+    environment:
+      MOCK_PROVIDER_ADDR: ":9090"
+      MOCK_RATE_LIMITED_RATIO: ${MOCK_RATE_LIMITED_RATIO:-0.10}
+      MOCK_SERVER_ERROR_RATIO: ${MOCK_SERVER_ERROR_RATIO:-0.05}
+      MOCK_MIN_LATENCY: ${MOCK_MIN_LATENCY:-10ms}
+      MOCK_MAX_LATENCY: ${MOCK_MAX_LATENCY:-30ms}
+      MOCK_RETRY_AFTER: ${MOCK_RETRY_AFTER:-1s}
+    ports:
+      - "127.0.0.1:${MOCK_PROVIDER_PORT:-9090}:9090"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/healthz"]
+      <<: *healthcheck-timing
+    restart: unless-stopped
+
+  # One-shot seeder: migrates the schema and inserts 3,000 deterministic fake
+  # users into the shared volume, then exits. Idempotent - on later `up`s it
+  # sees existing users and exits immediately. Reseed: `make docker-reseed`.
+  seed:
+    build:
+      <<: *backend-build
+      target: seed
+    image: smart-campaign-composer/seed:local
+    command: ["-count", "3000", "-seed", "42"]
+    environment:
+      DB_PATH: /data/campaign.db
+    volumes:
+      - db-data:/data
+    restart: "no"
+
+  # Go HTTP API: segment preview, streamed composition (SSE), approval,
+  # rate-limited dispatch worker pool and live tracking (SSE), /healthz.
+  backend:
+    build:
+      <<: *backend-build
+      target: server
+    image: smart-campaign-composer/backend:local
+    environment:
+      HTTP_ADDR: ":8080"
+      DB_PATH: /data/campaign.db
+      PROVIDER_URL: http://mock-provider:9090
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+      MOCK_STREAM_DELAY_MS: ${MOCK_STREAM_DELAY_MS:-15}
+    volumes:
+      - db-data:/data
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      mock-provider:
+        condition: service_healthy
+    healthcheck:
+      # 503 (database or segment view broken) fails the check; a provider
+      # outage only reports "degraded" and keeps the API healthy (ADR 009).
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      <<: *healthcheck-timing
+    # The server drains HTTP for up to 10 s and lets running dispatches
+    # record their last results before exiting (ADR 007).
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+  # Vue 3 SPA served by nginx, which reverse-proxies /api and /healthz to
+  # the backend (single origin, SSE-safe proxy settings).
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: smart-campaign-composer/frontend:local
+    environment:
+      API_UPSTREAM: backend:8080
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      <<: *healthcheck-timing
+    restart: unless-stopped
+
+volumes:
+  # SQLite database (users, campaigns, dispatch_logs). A named volume lives
+  # inside Docker's Linux VM, so SQLite's WAL locking works on Windows and
+  # macOS too (it does not on bind-mounted host folders).
+  db-data:

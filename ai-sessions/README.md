@@ -18,3 +18,7 @@ https://claude.ai/share/c511e334-6d3b-49a1-9969-44083a16cc5e
 https://claude.ai/share/5803d095-cadf-48bb-a7b9-a1aaf40d8d0d
 
 - **Session 06 - Vue 3 Frontend, SSE Streaming & Live Dispatch Dashboard**
+https://claude.ai/share/59ef6041-4613-4f3b-8793-0801ffa21c56
+
+- **Session 07 - Docker Compose Orchestration, Auto-Seeding & Production README**
+https://claude.ai/share/6fcf5fed-5eb8-42d7-abd1-ef24f33210b4

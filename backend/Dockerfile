@@ -37,9 +37,15 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/server ./cmd/seed ./cmd/m
 # ------------------------------------------------------------ runtime base --
 # Alpine rather than distroless: busybox `wget` gives docker compose a real
 # HTTP healthcheck without shipping a curl or an extra probe binary.
+#
+# No `apk add`: the build must not depend on the Alpine package CDN.
+#  - TLS roots (api.anthropic.com) come from ca-certificates-bundle, which is
+#    part of the alpine base image (/etc/ssl/certs/ca-certificates.crt).
+#  - No tzdata: the code works in UTC only (ADR 003) and never calls
+#    time.LoadLocation; Go resolves TZ=UTC without zoneinfo files.
+#  - addgroup / adduser / mkdir / chown are busybox built-ins.
 FROM alpine:${ALPINE_VERSION} AS runtime
-RUN apk add --no-cache ca-certificates tzdata \
- && addgroup -S -g 10001 app \
+RUN addgroup -S -g 10001 app \
  && adduser -S -D -H -u 10001 -G app app \
  && mkdir -p /data \
  && chown app:app /data
