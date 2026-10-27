@@ -6,6 +6,7 @@ import SmsPreview from '../ui/SmsPreview.vue'
 import EmailPreview from '../ui/EmailPreview.vue'
 import CharCounter from '../ui/CharCounter.vue'
 import { measure, LIMITS } from '../../lib/text.js'
+import { smsInfo } from '../../lib/sms.js'
 
 const props = defineProps({ flow: { type: Object, required: true } })
 const f = props.flow
@@ -14,6 +15,7 @@ const c = f.compose
 const FIELD_NAMES = { sms_content: 'SMS', email_subject: 'E-posta konusu', email_body: 'E-posta gövdesi' }
 const streaming = computed(() => c.status.value === 'streaming')
 const smsCheck = computed(() => measure(c.fields.sms_content, LIMITS.sms_content))
+const smsParts = computed(() => smsInfo(c.fields.sms_content))
 const subjectCheck = computed(() => measure(c.fields.email_subject, LIMITS.email_subject))
 
 const heading = computed(() => {
@@ -62,7 +64,7 @@ const heading = computed(() => {
     <div class="mt-8 grid items-start gap-6 lg:grid-cols-[22rem_1fr]">
       <div>
         <SmsPreview :text="c.fields.sms_content" :typing="c.activeField.value === 'sms_content'" data-test="stream-sms" />
-        <CharCounter :check="smsCheck" class="mx-auto mt-3 max-w-[22rem]" />
+        <CharCounter :check="smsCheck" :sms="smsParts" class="mx-auto mt-3 max-w-[22rem]" data-test="compose-sms-counter" />
       </div>
       <div>
         <EmailPreview

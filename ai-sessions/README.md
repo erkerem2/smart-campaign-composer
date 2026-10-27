@@ -25,3 +25,6 @@ https://claude.ai/share/6fcf5fed-5eb8-42d7-abd1-ef24f33210b4
 
 - **Session 08 - QA Hardening, Red-Green TDD & Edge-Case Audit**
 https://claude.ai/share/fd5b320e-d1cf-4846-89cf-de62279183c8
+
+- **Session 09 - Global Metrics Endpoint, GitHub Actions CI & SMS UCS-2 Segment Hardening**
+https://claude.ai/share/65195470-82e4-4983-ab7e-b787db892e19

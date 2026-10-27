@@ -13,7 +13,7 @@ A marketer types what they want in plain Turkish; Claude proposes **who** should
 | LLM | Claude via the Anthropic Messages API (forced tool calls → JSON), or a deterministic mock |
 | Delivery | In-process worker pool → mock SMS / e-mail provider over HTTP |
 
-Design decisions and their trade-offs are recorded in [`DECISIONS.md`](DECISIONS.md) (ADR 001–011); each backend package has its own README.
+Design decisions and their trade-offs are recorded in [`DECISIONS.md`](DECISIONS.md) (ADR 001–012); each backend package has its own README.
 
 ---
 
@@ -46,8 +46,8 @@ The first build downloads the base images and dependencies (a few minutes); late
 
 | Service | URL | What it is |
 |---|---|---|
-| **Frontend** | <http://localhost:3000> | The campaign wizard (nginx + Vue build, proxies `/api` and `/healthz`) |
-| **Backend API** | <http://localhost:8080/healthz> | Go API; health of the database, the provider and the LLM mode |
+| **Frontend** | <http://localhost:3000> | The campaign wizard (nginx + Vue build, proxies `/api`, `/healthz` and `/metrics`) |
+| **Backend API** | <http://localhost:8080/healthz> · [`/metrics`](http://localhost:8080/metrics) | Go API; health of the database, the provider and the LLM mode; global delivery totals |
 | **Mock provider** | <http://localhost:9090/v1/stats> | Fake SMS / e-mail gateway; per-channel counters of what it accepted |
 
 What happens on `docker compose up`:
@@ -101,7 +101,7 @@ flowchart LR
     subgraph compose["docker compose"]
         FE["frontend<br/>nginx · Vue 3 SPA<br/>:3000"]
         subgraph BE["backend · Go API :8080"]
-            API["internal/api<br/>REST + SSE, CORS, /healthz"]
+            API["internal/api<br/>REST + SSE, CORS, /healthz, /metrics"]
             SEG["segment<br/>JSON AST parser · whitelist<br/>parameterised SQL"]
             CMP["composer<br/>stream · validate · render"]
             DSP["dispatch<br/>worker pool · limiter · retry"]
@@ -141,7 +141,7 @@ flowchart LR
  5. Tracking     lock-free counters ──► SSE every 500 ms + GET snapshot ──► live dashboard
 ```
 
-**Request path for the UI:** browser → nginx (`:3000`) → `backend:8080`. nginx serves the static build and proxies `/api` and `/healthz` with buffering disabled and a 1 h read timeout, so both SSE streams (compose and dispatch) arrive token by token. The browser only ever talks to one origin, so CORS never applies in this setup.
+**Request path for the UI:** browser → nginx (`:3000`) → `backend:8080`. nginx serves the static build and proxies `/api`, `/healthz` and `/metrics` with buffering disabled and a 1 h read timeout, so both SSE streams (compose and dispatch) arrive token by token. The browser only ever talks to one origin, so CORS never applies in this setup.
 
 ---
 
@@ -170,6 +170,7 @@ Claude never writes SQL. It is forced to call a tool whose input is a **rule tre
 - Only whitelisted variables (`{{first_name}}`, `{{last_name}}`); single-line subjects (header injection); control and bidi-override characters rejected; the e-mail body is Markdown or a small whitelisted HTML subset.
 - An invalid draft is sent back to Claude **once** with the issues; if it still fails, the marketer fixes it — no unbounded loops.
 - The UI counters mirror the server's counting rules exactly, but approval is always re-validated by the API.
+- Next to the SMS counter the UI shows the **encoding and the number of SMS parts** the operator will bill: `GSM-7 (160 limit) - 1 SMS`, or `UCS-2 (70 limit) - 2 SMS` as soon as one character outside the GSM-7 alphabet appears (`ç ş ğ ı İ Ş Ğ`, emoji, typographic quotes; `ü ö Ç` are GSM-7). Multi-part messages use 153 / 67 per part, extension characters (`€ { } [ ] ~ | ^ \`) cost 2 septets and nothing is split across parts. When the template is GSM-7 but contains `{{first_name}}`, it warns that a Turkish name (or the fallback "Değerli müşterimiz") can switch that recipient to UCS-2. This is informational (`frontend/src/lib/sms.js`); the 160-character ceiling stays the rule that blocks approval.
 
 ### 3. 100 msg/s per channel, exponential backoff with jitter (ADR 007)
 
@@ -187,6 +188,7 @@ Claude never writes SQL. It is forced to call a tool whose input is a **rule tre
 ### 5. Operability
 
 - `GET /healthz` checks the database (including a query on the segment view) and the provider in parallel within 2 s. Only the database makes it `503`; a provider outage reports `degraded` because dispatch retries through it. Docker's healthchecks use this endpoint.
+- `GET /metrics` returns global system numbers as JSON — `uptime_seconds`, `total_campaigns`, `total_sent`, `total_failed`, `total_retried`, `active_dispatches`. The totals come from one aggregate query over `campaigns` and `dispatch_logs`, so they survive restarts and agree with the per-campaign stats (the end-to-end test checks this); retries are counted when a delivery reaches its final state.
 - Graceful shutdown: HTTP drains for 10 s, running dispatches stop cleanly and still record results the provider already accepted.
 - Containers run as an unprivileged user; binaries are static (`CGO_ENABLED=0`).
 
@@ -196,7 +198,7 @@ Claude never writes SQL. It is forced to call a tool whose input is a **rule tre
 
 ```bash
 make test            # Go: all backend packages
-make test-frontend   # Vitest: 61 frontend tests (needs `make frontend-install` once)
+make test-frontend   # Vitest: 218 frontend tests (needs `make frontend-install` once)
 make test-all        # both
 make test-docker     # both, inside the Docker build images — only Docker required
 make test-e2e        # just the HTTP end-to-end flow, verbose
@@ -216,9 +218,11 @@ Highlights:
 | `internal/segment` | Parser rejects unknown fields/operators/keys, limits, type and range errors; SQL placeholder parity under fuzzing; audience counts on the real seed equal a Go oracle |
 | `internal/composer` | 160 / 80 limits at code-point level, variable whitelist, markup whitelist, incremental JSON extraction at every split point, bounded repair |
 | `internal/dispatch` | Limiter cap in any window, backoff/jitter bounds, `Retry-After`, claim-before-send, resume without duplicates, opt-out between plan and send |
-| `frontend/tests` | SSE parser at every chunk boundary, counter parity with the server, wizard state machine, dispatch stream with polling fallback |
+| `frontend/tests` | SSE parser at every chunk boundary, counter parity with the server, GSM-7 / UCS-2 detection and SMS part counting, wizard state machine, dispatch stream with polling fallback |
 
 `make test-race` (in `backend/`) runs the suite with the race detector; it needs CGO and a C compiler, so it is not part of the default target.
+
+**CI:** [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request with two jobs — *backend* (`go test -count=1 ./...`, Go 1.24 on Linux) and *frontend* (`npm ci`, `npm test`, `npm run build`, Node 22). Neither needs secrets: the suites use the mock LLM and the in-process mock provider.
 
 ---
 
@@ -267,6 +271,7 @@ Copy to `.env`; it is git-ignored. Docker Compose uses it for variable substitut
 | Method & path | Purpose |
 |---|---|
 | `GET /healthz` | Health of database and provider, uptime, active dispatches, LLM mode |
+| `GET /metrics` | Global totals: `uptime_seconds`, `total_campaigns`, `total_sent`, `total_failed`, `total_retried`, `active_dispatches` |
 | `POST /api/campaigns/preview-segment` | `{brief}` → Claude rule, validated canonical AST, counts; or `{rule}` → re-count an edited rule without calling the LLM |
 | `POST /api/campaigns/compose/stream` | SSE: `delta` per field, `retry` with issues, `done` with the validated draft, or `error` with the rejected attempt |
 | `POST /api/campaigns` | Approve: rule + content re-validated, stored as `approved` atomically |
@@ -288,11 +293,11 @@ As the case suggests, the core flow was made solid end to end before anything op
 | **Scheduled sending** (bonus) | Needs a `scheduled_at` on campaigns and a ticker that calls the existing `Start`; the dispatch engine is already resumable and idempotent, so it is an additive change |
 | **A/B variants** (bonus) | Would add a variant column to messages and a deterministic user → variant split; tracking would need per-variant counters |
 | **Content in the user's language** (bonus) | The seed has no language attribute; the composer would generate one draft per language and the renderer pick per user. UI copy is Turkish only (no i18n layer) |
-| **CI pipeline** (bonus) | `make test-docker` is the job a CI runner would execute; a Playwright run against `docker compose` is the natural browser E2E step |
 | Authentication, multi-tenancy | Out of the case's scope; would sit in the existing middleware chain |
 | Campaign list / reload recovery | The UI tracks the campaign it created; a reload loses wizard state although dispatch continues server-side (`GET /api/campaigns` + deep link would restore it) |
 | Durable queue, horizontal scale | SQLite has one writer and the queue is in-process — right for thousands of recipients at 100 msg/s; millions would move to Postgres (`SKIP LOCKED`) or a broker behind the same `dispatch` ports |
-| SMS encoding segments | The case's 160-character rule is enforced; real carriers bill GSM-7 vs UCS-2 segments (most Turkish letters force UCS-2) |
+| SMS encoding as a hard limit | The UI shows GSM-7 / UCS-2 and the SMS part count, but the rule that blocks approval stays the case's 160 characters; a per-encoding cap (e.g. "at most 2 parts") would be a validator rule on the server, mirrored in `lib/sms.js` |
+| Browser E2E in CI | CI runs the Go and Vitest suites; a Playwright run against `docker compose` is the natural next job |
 | Rendered e-mail HTML preview | The preview shows the source as text; rendering would require a sanitiser identical to the server's whitelist |
 | Strict "no purchase in 30 days" reading | The sample brief is interpreted as *no purchase since the last cart activity* (ADR 008); the strict variant needs a `last_purchase_days` field |
 
@@ -303,9 +308,10 @@ As the case suggests, the core flow was made solid end to end before anything op
 ```
 .
 ├── docker-compose.yml        one-command setup (ADR 011)
+├── .github/workflows/ci.yml  CI: Go tests · Vitest + Vite build
 ├── Makefile                  test / run / docker shortcuts
 ├── .env.example
-├── DECISIONS.md              architecture decision records 001–011
+├── DECISIONS.md              architecture decision records 001–012
 ├── CASE_SPEC.md              the case brief
 ├── ai-sessions/              links to the Claude sessions used to build this
 ├── backend/
@@ -315,7 +321,7 @@ As the case suggests, the core flow was made solid end to end before anything op
 │   │   ├── seed/             3,000 deterministic fake users
 │   │   └── mock-provider/    fake SMS / e-mail gateway
 │   └── internal/
-│       ├── api/              REST + SSE handlers, CORS, health
+│       ├── api/              REST + SSE handlers, CORS, health, metrics
 │       ├── segment/          rule AST, parser, whitelist, SQL compiler, Anthropic client
 │       ├── composer/         prompt, streaming extractor, validator, renderer
 │       ├── dispatch/         planner, worker pool, limiter, backoff, stats
@@ -326,7 +332,7 @@ As the case suggests, the core flow was made solid end to end before anything op
 │       └── config/           env + .env loading
 └── frontend/
     ├── Dockerfile            Vite build → nginx (+ test target)
-    ├── nginx/                reverse-proxy template (/api, /healthz, SSE)
+    ├── nginx/                reverse-proxy template (/api, /healthz, /metrics, SSE)
     ├── src/                  steps, UI components, composables, SSE client
     └── tests/                Vitest suites
 ```

@@ -16,6 +16,7 @@ POST /{id}/dispatch ─► 202 ─► GET /{id}/dispatch/stream ─► SSE stats
 | Method & path | Body | Success | Errors (`error.code`) |
 |---|---|---|---|
 | `GET /healthz` | – | `200` `{status: ok\|degraded, checks, system}` | `503` `unhealthy` (database) |
+| `GET /metrics` | – | `200` `{uptime_seconds, total_campaigns, total_sent, total_failed, total_retried, active_dispatches}` | `500 internal`, `503 metrics_unavailable` (no store wired) |
 | `POST /api/campaigns/preview-segment` | `{"brief"}` or `{"rule": {...}}` | `200` `{brief, rule, audience: {total, sms_opt_in, email_opt_in, reachable}}` | `400 invalid_brief`, `422 invalid_rule` (+`path`), `502 llm_unavailable` |
 | `POST /api/campaigns/compose/stream` | `{"brief"}` | `200 text/event-stream` | `400 invalid_brief` (before the stream) |
 | `POST /api/campaigns` | `{"brief", "segment_rule", "messages": {sms_content, email_subject, email_body}}` | `201` + `Location`, `{campaign, messages, report, audience}` | `400 missing_rule\|missing_messages\|invalid_brief`, `422 invalid_rule\|invalid_content (+issues)\|empty_audience` |
@@ -23,6 +24,11 @@ POST /{id}/dispatch ─► 202 ─► GET /{id}/dispatch/stream ─► SSE stats
 | `POST /api/campaigns/{id}/dispatch` | `{}` or empty, `Content-Type: application/json` required (CSRF) | `202` `{campaign_id, state, resumed, audience_size, stats_url, stream_url}` | `409 already_running\|invalid_state\|missing_rule\|invalid_rule`, `404`, `415 unsupported_media_type`, `403 origin_not_allowed` |
 | `GET /api/campaigns/{id}/dispatch` | – | `200` stats snapshot | `404` |
 | `GET /api/campaigns/{id}/dispatch/stream` | – | `200 text/event-stream` | `404` |
+
+`/metrics` totals are read from the database on every call (durable across restarts, all campaigns):
+`total_sent` / `total_failed` count deliveries that reached a final state, `total_retried` the retry attempts
+recorded on them (retries of deliveries still in flight are added when they finish). `uptime_seconds` and
+`active_dispatches` describe this process.
 
 All errors: `{"error": {"code", "message", "path"?, "issues"?}}`. JSON bodies must be
 `Content-Type: application/json` (else `415`), ≤ 256 KB (`413`), one object without unknown fields (`400 invalid_json`).

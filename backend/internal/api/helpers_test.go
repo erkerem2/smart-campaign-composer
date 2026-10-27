@@ -111,6 +111,7 @@ func newStack(t *testing.T, o stackOpts) *stack {
 		Users:          userRepo,
 		Dispatcher:     d,
 		Health:         health,
+		Metrics:        repository.NewMetricsRepository(db),
 		BaseContext:    base,
 		CORS:           api.CORSConfig{AllowedOrigins: o.cors},
 		StreamInterval: 100 * time.Millisecond,

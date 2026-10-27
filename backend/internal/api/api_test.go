@@ -330,4 +330,21 @@ func TestEndToEndCampaignFlow(t *testing.T) {
 	}
 	expectError(t, s.postJSON(t, fmt.Sprintf("/api/campaigns/%d/dispatch", c.ID), map[string]any{}),
 		http.StatusConflict, "invalid_state")
+
+	// --- 9. Global metrics agree with the campaign's final stats ----------
+	type metricsBody struct {
+		Uptime    float64 `json:"uptime_seconds"`
+		Campaigns int64   `json:"total_campaigns"`
+		Sent      int64   `json:"total_sent"`
+		Failed    int64   `json:"total_failed"`
+		Retried   int64   `json:"total_retried"`
+	}
+	mr := s.get(t, "/metrics")
+	if mr.status != http.StatusOK {
+		t.Fatalf("GET /metrics = %d %s", mr.status, mr.body)
+	}
+	m := decode[metricsBody](t, mr)
+	if m.Campaigns != 1 || m.Sent != fin.Sent || m.Failed != fin.Failed || m.Retried != fin.Retried || m.Uptime < 0 {
+		t.Fatalf("metrics = %+v, want 1 campaign and sent/failed/retried = %d/%d/%d", m, fin.Sent, fin.Failed, fin.Retried)
+	}
 }

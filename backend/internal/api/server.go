@@ -45,6 +45,12 @@ type DispatchService interface {
 	ActiveRuns() int
 }
 
+// MetricsStore aggregates system-wide totals for GET /metrics
+// (*repository.MetricsRepository).
+type MetricsStore interface {
+	Totals(ctx context.Context) (domain.SystemTotals, error)
+}
+
 // HealthCheck is one dependency probe of GET /healthz.
 type HealthCheck struct {
 	Name string
@@ -64,6 +70,9 @@ type Config struct {
 	Users      dispatch.UserLoader
 	Dispatcher DispatchService
 	Health     []HealthCheck
+	// Metrics backs GET /metrics. Optional: without it the endpoint answers
+	// 503 metrics_unavailable.
+	Metrics MetricsStore
 
 	// BaseContext is the server's lifetime context. Dispatch runs outlive
 	// the request that starts them, so they use this instead of
@@ -114,6 +123,7 @@ func New(cfg Config) (*Server, error) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
+	mux.HandleFunc("GET /metrics", s.handleMetrics)
 	mux.HandleFunc("POST /api/campaigns/preview-segment", s.handlePreviewSegment)
 	mux.HandleFunc("POST /api/campaigns/compose/stream", s.handleComposeStream)
 	mux.HandleFunc("POST /api/campaigns", s.handleCreateCampaign)

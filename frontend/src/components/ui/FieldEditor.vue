@@ -3,6 +3,7 @@ import { ref, computed, nextTick } from 'vue'
 import Icon from './Icon.vue'
 import CharCounter from './CharCounter.vue'
 import { VARIABLES, token } from '../../lib/text.js'
+import { smsInfo } from '../../lib/sms.js'
 
 // One editable content field of the approval step: label, "edited" marker
 // with a way back to Claude's suggestion, live counter, issues and
@@ -25,6 +26,8 @@ const id = computed(() => `edit-${props.field}`)
 const value = computed(() => f.edits[props.field])
 const edited = computed(() => f.edited.value.includes(props.field))
 const check = computed(() => f.checks.value[props.field])
+// SMS only: encoding (GSM-7 / UCS-2) and number of SMS parts.
+const sms = computed(() => (props.field === 'sms_content' ? smsInfo(value.value) : null))
 
 // Length problems are already shown by the counter; list the rest.
 const issues = computed(() => [
@@ -97,7 +100,7 @@ async function insertVariable(name) {
       @input="onInput"
     />
 
-    <CharCounter v-if="counter" :id="`${id}-count`" :check="check" class="mt-1.5" :data-test="`counter-${field}`" />
+    <CharCounter v-if="counter" :id="`${id}-count`" :check="check" :sms="sms" class="mt-1.5" :data-test="`counter-${field}`" />
     <p v-if="hint" :id="`${id}-hint`" class="mt-1.5 text-sm text-ink-3">{{ hint }}</p>
     <ul v-if="issues.length" :id="`${id}-issues`" class="mt-1.5 space-y-0.5 text-sm text-bad" :data-test="`issues-${field}`">
       <li v-for="(i, k) in issues" :key="k">{{ i.message }}</li>

@@ -115,6 +115,7 @@ func run() error {
 			{Name: "database", Critical: true, Check: func(ctx context.Context) error { return pingDB(ctx, db) }},
 			{Name: "provider", Check: providerClient.Ping},
 		},
+		Metrics: repository.NewMetricsRepository(db),
 		// Dispatch runs live as long as the server, not the request.
 		BaseContext: ctx,
 		CORS:        api.CORSConfig{AllowedOrigins: corsOrigins},

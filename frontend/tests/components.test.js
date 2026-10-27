@@ -5,8 +5,10 @@ import CharCounter from '../src/components/ui/CharCounter.vue'
 import HealthBadge from '../src/components/ui/HealthBadge.vue'
 import StepNav from '../src/components/ui/StepNav.vue'
 import ReviewStep from '../src/components/steps/ReviewStep.vue'
+import ComposeStep from '../src/components/steps/ComposeStep.vue'
 import AudienceStep from '../src/components/steps/AudienceStep.vue'
 import { measure } from '../src/lib/text.js'
+import { smsInfo } from '../src/lib/sms.js'
 import { api } from '../src/api/client.js'
 import { useCampaignFlow, SAMPLE_BRIEF, STEPS } from '../src/composables/useCampaignFlow.js'
 import { sseResponse, frame } from './helpers.js'
@@ -47,6 +49,72 @@ describe('CharCounter', () => {
   it('warns near the limit', () => {
     const w = mount(CharCounter, { props: { check: measure('a'.repeat(150), 160) } })
     expect(w.find('[data-state]').attributes('data-state')).toBe('near')
+  })
+  it('shows no encoding line without the sms prop (e-mail subject)', () => {
+    const w = mount(CharCounter, { props: { check: measure('Konu', 80) } })
+    expect(w.find('[data-test=sms-encoding]').exists()).toBe(false)
+  })
+
+  it('shows GSM-7 and the SMS count next to the character counter', () => {
+    const text = 'Sepetin seni bekliyor!'
+    const w = mount(CharCounter, { props: { check: measure(text, 160), sms: smsInfo(text) } })
+    const line = w.find('[data-test=sms-encoding]')
+    expect(line.attributes('data-encoding')).toBe('GSM-7')
+    expect(line.text()).toContain('GSM-7 (160 limit) - 1 SMS')
+    expect(w.find('[data-test=sms-non-gsm]').exists()).toBe(false)
+    expect(w.find('[data-state]').text()).toContain('22 / 160')
+  })
+
+  it('switches to UCS-2, names the Turkish characters and counts parts', () => {
+    const text = 'Şimdi alışverişe başla, sepetindeki ürünler seni bekliyor, kaçırma fırsatı!' // 75 chars
+    const w = mount(CharCounter, { props: { check: measure(text, 160), sms: smsInfo(text) } })
+    const line = w.find('[data-test=sms-encoding]')
+    expect(line.attributes('data-encoding')).toBe('UCS-2')
+    expect(line.attributes('data-segments')).toBe('2')
+    expect(line.text()).toContain('UCS-2 (70 limit) - 2 SMS')
+    expect(w.find('[data-test=sms-non-gsm]').text()).toContain('Ş ı ş ç')
+    // The 160 ceiling is unchanged: 75 characters are fine.
+    expect(w.find('[data-state]').attributes('data-state')).toBe('ok')
+  })
+
+  it('warns when a Turkish name would need more parts', () => {
+    const text = '{{first_name}}' + 'a'.repeat(60)
+    const w = mount(CharCounter, { props: { check: measure(text, 160), sms: smsInfo(text) } })
+    expect(w.find('[data-test=sms-encoding]').text()).toContain('GSM-7 (160 limit) - 1 SMS')
+    expect(w.find('[data-test=sms-worst]').text()).toContain('UCS-2 - 2 SMS')
+  })
+})
+
+describe('SMS encoding in the steps', () => {
+  it('shows encoding and SMS parts under the streamed SMS', async () => {
+    const flow = await reviewFlow()
+    const w = mount(ComposeStep, { props: { flow } })
+    const line = w.find('[data-test=compose-sms-counter] [data-test=sms-encoding]')
+    expect(line.text()).toContain('GSM-7 (160 limit) - 1 SMS')
+  })
+
+  it('updates live while the marketer edits, without changing the 160 limit', async () => {
+    const flow = await reviewFlow()
+    const w = mount(ReviewStep, { props: { flow } })
+    const sms = w.find('[data-test=edit-sms_content]')
+    const line = () => w.find('[data-test=counter-sms_content] [data-test=sms-encoding]')
+
+    await sms.setValue('Kisa ve oz')
+    expect(line().attributes('data-encoding')).toBe('GSM-7')
+    expect(line().text()).toContain('GSM-7 (160 limit) - 1 SMS')
+
+    await sms.setValue('Kısa ve öz')
+    expect(line().attributes('data-encoding')).toBe('UCS-2')
+    expect(line().text()).toContain('UCS-2 (70 limit) - 1 SMS')
+
+    // 150 Turkish letters: 3 SMS parts, but still within the 160 ceiling.
+    await sms.setValue('ç'.repeat(150))
+    expect(line().text()).toContain('UCS-2 (70 limit) - 3 SMS')
+    expect(w.find('[data-test=counter-sms_content] [data-state]').attributes('data-state')).not.toBe('over')
+    expect(w.find('[data-test=approve]').attributes('disabled')).toBeUndefined()
+
+    // The e-mail subject counter has no SMS encoding line.
+    expect(w.find('[data-test=counter-email_subject] [data-test=sms-encoding]').exists()).toBe(false)
   })
 })
 

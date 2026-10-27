@@ -3,6 +3,7 @@
 // frontend needs, behind CORS, logging and panic-recovery middleware.
 //
 //	GET  /healthz                               system, database, provider
+//	GET  /metrics                               global totals: campaigns, sent, failed, retried
 //	POST /api/campaigns/preview-segment         brief (or edited rule) → rule + audience counts
 //	POST /api/campaigns/compose/stream          brief → SMS + e-mail, streamed (SSE)
 //	POST /api/campaigns                         approve: rule + content → campaign (approved)
@@ -13,8 +14,8 @@
 //
 // The handlers only translate HTTP to use-case calls; every dependency is an
 // interface (SegmentService, ComposerService, CampaignStore,
-// DispatchService), so tests wire the real engines with a mock LLM and a
-// mock provider, and nothing here knows about Anthropic or SQL.
+// DispatchService, MetricsStore), so tests wire the real engines with a mock
+// LLM and a mock provider, and nothing here knows about Anthropic or SQL.
 //
 // Trust boundaries:
 //

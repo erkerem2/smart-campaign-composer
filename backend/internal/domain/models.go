@@ -220,6 +220,17 @@ type DispatchCounts struct {
 	Retries int64 `json:"retries"`
 }
 
+// SystemTotals aggregates every campaign and every dispatch_logs row in the
+// database: the durable part of GET /metrics.
+type SystemTotals struct {
+	Campaigns int64 `json:"campaigns"`
+	Sent      int64 `json:"sent"`
+	Failed    int64 `json:"failed"`
+	// Retries is the number of retry attempts (not messages) recorded on
+	// finished rows, like DispatchCounts.Retries.
+	Retries int64 `json:"retries"`
+}
+
 // IdempotencyKey returns the key sent to providers for this delivery.
 func (d DispatchLog) IdempotencyKey() string {
 	return IdempotencyKey(d.CampaignID, d.UserID, d.Channel)
